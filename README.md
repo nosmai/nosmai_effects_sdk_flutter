@@ -2,343 +2,95 @@
 
 # Nosmai Effects SDK for Flutter
 
-The official Flutter plugin for integrating Nosmai Effects with real-time camera preview,
-beauty effects, AR effects, LUT filters, recording, and local/cloud filter
-discovery.
-
-## Features
-
-- Real-time camera preview on Android and iOS
-- Beauty controls such as smoothing, whitening, face shape, lipstick, blush, and eye makeup
-- `.nosmai` AR effects and regular filter/LUT effects
-- Local production filter listing with manifest metadata
-- Development-only loose `.nosmai` filter discovery
-- Cloud filter listing, pagination, download, and removal
-- Front/back camera switching, photo capture, video recording, and gallery save
-
-## Platform Support
-
-| Platform | Status |
-|----------|--------|
-| iOS      | iOS 15.0+, physical ARM64 device |
-| Android  | API 21+, ARM64 (`arm64-v8a`) device |
-
-The iOS simulator is not supported. Camera, rendering, filters, and recording
-must be built and tested on a physical ARM64 iOS device.
-
-## Installation
-
-```yaml
-dependencies:
-  nosmai_effects_sdk: ^1.0.0
-```
-
-### Migrating from `nosmai_camera_sdk`
-
-Replace the dependency and public Dart import:
-
-```dart
-import 'package:nosmai_effects_sdk/nosmai_effects_sdk.dart';
-```
-
-The existing `NosmaiFlutter`, `NosmaiCameraPreview`, filter, camera, and cloud
-API usage remains unchanged. Keep the native Android AAR and iOS CocoaPods
-setup described below.
-
-## Setup
-
-### iOS
-
-The plugin installs the proprietary `NosmaiCameraSDK` native dependency through
-CocoaPods. Do not copy an iOS framework into the Flutter application manually.
-
-Update `ios/Podfile`:
-
-```ruby
-platform :ios, '15.0'
-
-target 'Runner' do
-  use_frameworks! :linkage => :static
-  use_modular_headers!
-
-  flutter_install_all_ios_pods(File.dirname(File.realpath(__FILE__)))
-end
-```
-
-Add permissions to `ios/Runner/Info.plist`:
-
-```xml
-<key>NSCameraUsageDescription</key>
-<string>This app uses the camera to apply real-time filters.</string>
-<key>NSMicrophoneUsageDescription</key>
-<string>This app uses the microphone for video recording.</string>
-<key>NSPhotoLibraryUsageDescription</key>
-<string>This app saves photos and videos to your gallery.</string>
-<key>NSPhotoLibraryAddUsageDescription</key>
-<string>This app saves photos and videos to your gallery.</string>
-```
-
-### Android
-
-The proprietary Android SDK is distributed separately and is not included in
-the pub.dev package.
-
-1. Download `nosmai-sdk-3.0.0.aar` from the
-   [Android SDK v3.0.0 release](https://github.com/nosmai/camera-sdk-android/releases/tag/v3.0.0).
-2. Verify it with the release `SHA256SUMS` file.
-3. Rename it to `nosmai-release.aar` and place it at
-   `android/app/libs/nosmai-release.aar`.
-
-Add the local AAR repository to `android/build.gradle`:
-
-```gradle
-allprojects {
-  repositories {
-    google()
-    mavenCentral()
-    flatDir { dirs "${rootProject.projectDir}/app/libs" }
-  }
-}
-```
-
-For projects using Kotlin DSL, add the equivalent to
-`android/build.gradle.kts`:
-
-```kotlin
-allprojects {
-  repositories {
-    google()
-    mavenCentral()
-    flatDir { dirs("${rootProject.projectDir}/app/libs") }
-  }
-}
-```
-
-Add the native SDK to `android/app/build.gradle`:
-
-```gradle
-dependencies {
-  implementation files('libs/nosmai-release.aar')
-}
-```
-
-Kotlin DSL (`android/app/build.gradle.kts`):
-
-```kotlin
-dependencies {
-  implementation(files("libs/nosmai-release.aar"))
-}
-```
-
-The current native SDK supports ARM64 Android devices (`arm64-v8a`).
-
-Restrict the consuming app to the supported ABI in
-`android/app/build.gradle`:
-
-```gradle
-android {
-  defaultConfig {
-    ndk {
-      abiFilters "arm64-v8a"
-    }
-  }
-}
-```
-
-Add permissions to `android/app/src/main/AndroidManifest.xml`:
-
-```xml
-<uses-permission android:name="android.permission.CAMERA"/>
-<uses-permission android:name="android.permission.RECORD_AUDIO"/>
-<uses-permission android:name="android.permission.INTERNET"/>
-```
-
-## Basic Usage
-
-```dart
-import 'package:nosmai_effects_sdk/nosmai_effects_sdk.dart';
-
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  const licenseKey = String.fromEnvironment('NOSMAI_LICENSE_KEY');
-  if (licenseKey.isEmpty) {
-    throw StateError('NOSMAI_LICENSE_KEY is required');
-  }
-  await NosmaiFlutter.initialize(licenseKey);
-  runApp(const MyApp());
-}
-```
-
-Pass the key at build or run time. Do not commit production keys to source
-control:
-
-```bash
-flutter run --dart-define=NOSMAI_LICENSE_KEY=YOUR_LICENSE_KEY
-```
-
-```dart
-class CameraScreen extends StatelessWidget {
-  const CameraScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: NosmaiCameraPreview(),
-    );
-  }
-}
-```
-
-## Applying Filters
-
-Use `applyEffect` for every external `.nosmai` package. The package manifest
-routes `filter`, `effect`, `beauty_effect`, and `background` to the correct
-native render slot.
-
-```dart
-final nosmai = NosmaiFlutter.instance;
-await nosmai.applyEffect(filter.path);
-```
-
-`applyFilter` remains available only as a legacy compatibility alias.
-
-Clear specific layers when needed:
-
-```dart
-await nosmai.clearFilter();    // regular filter only
-await nosmai.clearAREffect();  // AR effect only
-await nosmai.clearAll();       // AR, filter, beauty, and background
-```
-
-## Local Filters
-
-The plugin and its example app do not ship any `.nosmai` filter binaries.
-Add only the licensed filters owned by your application to the consuming app.
-
-Production local filters should use the manifest-based folder structure:
-
-```text
-assets/nosmai_filters/
-  glam_lips/
-    glam_lips_manifest.json
-    glam_lips_preview.png
-    glam_lips.nosmai
-```
-
-Declare each filter folder in `pubspec.yaml`:
-
-```yaml
-flutter:
-  assets:
-    - assets/nosmai_filters/glam_lips/
-    - assets/nosmai_filters/soft_blush/
-```
-
-Load production filters:
-
-```dart
-final filters = await nosmai.getLocalFilters();
-final grouped = await nosmai.getAllLocalFilters();
-final effects = await nosmai.getLocalEffects();
-final backgrounds = await nosmai.getLocalBackgrounds();
-final beauty = await nosmai.getLocalBeautyEffects();
-```
-
-The plugin uses Flutter's supported `AssetManifest` API to discover declared
-assets. It does not depend on the removed `AssetManifest.json` build file.
-
-## Debug Filters
-
-`getDebugFilters` is intentionally kept for development/testing. Use it when
-you want to bundle loose `.nosmai` files directly, usually under
-`assets/filters/`, without creating manifest and preview files.
-
-```yaml
-flutter:
-  assets:
-    - assets/filters/
-```
-
-```dart
-final allDebugFilters = await nosmai.getDebugFilters();
-
-final debugEffects = await nosmai.getDebugFilters(
-  type: NosmaiLocalFilterType.effect,
-);
-```
-
-For production apps, prefer the manifest-based local filter methods above.
-
-## Cloud Filters
-
-```dart
-final allFilters = await nosmai.getCloudFilters();
-
-final page = await nosmai.getCloudFilters(
-  filterType: NosmaiCloudFilterType.effects,
-  version: NosmaiCloudFilterVersion.v2,
-  page: 1,
-  limit: 20,
-);
-
-final beautyEffects = await nosmai.getCloudFilters(
-  filterType: NosmaiCloudFilterType.beautyEffect,
-);
-
-final pagination = nosmai.lastPaginationInfo;
-```
-
-`version` is optional. Cloud filter version 2 is used by default, so existing
-`getCloudFilters()` calls remain unchanged.
-
-Download and apply a cloud filter:
-
-```dart
-final result = await nosmai.downloadCloudFilter(filter.cloudIdentifier);
-final path = result['path'] as String?;
-if (path != null) {
-  await nosmai.applyEffect(path);
-}
-```
-
-## Camera Controls
-
-```dart
-await nosmai.switchCamera();
-
-final photo = await nosmai.capturePhoto();
-if (photo.success) {
-  await nosmai.saveImageToGallery(photo.imageData!);
-}
-
-await nosmai.startRecording();
-final recording = await nosmai.stopRecording();
-if (recording.success && recording.videoPath != null) {
-  await nosmai.saveVideoToGallery(recording.videoPath!);
-}
-```
-
-## Lifecycle
-
-Use `pauseCamera`/`resumeCamera` for short tab changes where you want fast
-return to the camera. Use `cleanup` when leaving the camera flow and releasing
-native camera/GL resources.
-
-```dart
-await nosmai.pauseCamera();
-await nosmai.resumeCamera();
-await nosmai.cleanup();
-```
+Add real-time AR effects, beauty filters, digital makeup, background replacement,
+camera capture, and cloud filters to Flutter applications through one SDK for
+Android and iOS.
+
+## Built for
+
+Nosmai Effects can be used in:
+
+- social media and short-video apps
+- live streaming and video chat
+- creator cameras and recording tools
+- beauty and makeup experiences
+- photo and video editing workflows
+- virtual background experiences
+- entertainment and interactive camera apps
+
+## Key features
+
+- Real-time camera preview with GPU-accelerated rendering
+- Face detection and face-tracked AR effects
+- 3D masks, stickers, particles, and animated overlays
+- Skin smoothing, whitening, sharpening, and teeth whitening
+- Lipstick, eyeshadow, blusher, eyelashes, and eyebrows
+- Face slimming, eye size, nose, chin, jaw, lips, forehead, and brow controls
+- LUT filters, brightness, contrast, hue, saturation, RGB, and white balance
+- Background blur, color, image, video, and packaged background effects
+- Local and cloud-based `.nosmai` filters
+- Cloud filter browsing, pagination, download, caching, and removal
+- Front and back camera switching
+- Photo capture and processed video recording
+- Processed camera output for live streaming integrations
+
+## On-device processing
+
+Camera frames, face tracking, beauty, AR effects, and background processing run
+on the user's device. Camera frames do not need to be uploaded to apply visual
+effects.
+
+Network access is used for license verification, cloud filter discovery, and
+filter downloads.
+
+## Platform support
+
+| Platform | Minimum requirement |
+| --- | --- |
+| Android | API 21 or later, physical `arm64-v8a` device |
+| iOS | iOS 15.0 or later, physical arm64 device |
+| Flutter | Flutter 3.22.0 or later, Dart 3.0.0 or later |
+
+Camera preview, face tracking, recording, and performance should be tested on
+physical devices. The iOS simulator is not supported by the native Effects SDK.
+
+## Getting started
+
+Add `nosmai_effects_sdk` to your Flutter application and follow the official
+Flutter integration guide for licensing, native setup, permissions, camera
+lifecycle, filters, capture, and production requirements.
+
+- [Introduction](https://nosmai.com/docs/effects/introduction/)
+- [Flutter integration guide](https://nosmai.com/docs/effects/flutter/)
+- [Authentication and licensing](https://nosmai.com/docs/effects/authentication/)
+- [Beauty and makeup](https://nosmai.com/docs/effects/beauty-and-makeup/)
+- [Filters and effects](https://nosmai.com/docs/effects/filters-and-effects/)
+- [Cloud filters](https://nosmai.com/docs/effects/cloud-filters/)
+- [Flutter live streaming with Agora](https://nosmai.com/docs/effects/flutter-live-streaming-agora/)
+- [Errors and troubleshooting](https://nosmai.com/docs/effects/errors-and-troubleshooting/)
+
+A valid Nosmai license key is required. Create and manage projects through the
+[Nosmai Console](https://console.nosmai.com/).
+
+## Native SDK distribution
+
+- iOS resolves the licensed `NosmaiCameraSDK` dependency through CocoaPods.
+- Android applications add the separately distributed proprietary Nosmai AAR.
+- Native SDK binaries and licensed `.nosmai` assets are not bundled in the
+  pub.dev package.
+
+See the Flutter integration guide for the current compatible native SDK
+versions and installation steps.
 
 ## Support
 
-- Plugin issues: [GitHub Issues](https://github.com/nosmai/nosmai_effects_sdk_flutter/issues)
-- SDK documentation: [Nosmai Effects documentation](https://nosmai.com/docs/effects/introduction/)
-- License registration: [https://effects.nosmai.com/](https://effects.nosmai.com/)
+- [Documentation](https://nosmai.com/docs/effects/introduction/)
+- [GitHub issues](https://github.com/nosmai/nosmai_effects_sdk_flutter/issues)
+- [Nosmai Effects](https://effects.nosmai.com/)
+- Email: admin@nosmai.com
 
 ## License
 
-This plugin and its associated native SDKs are proprietary commercial software.
-Use, modification, redistribution, reverse engineering, or sublicensing is not
-permitted without written authorization from Nosmai. A valid license agreement
-and platform license key are required. See [LICENSE](LICENSE).
+This Flutter plugin and its associated native SDKs are proprietary commercial
+software. A valid agreement and license key are required. See [LICENSE](LICENSE)
+for the applicable terms.
