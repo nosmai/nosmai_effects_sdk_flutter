@@ -1,0 +1,7 @@
+/coverage/
+/LOCAL_FILTERS_IMPROVEMENTS.md
+/.dart_tool/
+/build/
+/android/libs/
+/ios/Framework/
+**/.DS_Store
