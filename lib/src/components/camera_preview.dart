@@ -1,8 +1,37 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../nosmai_effects_sdk.dart';
 import '../platform/method_channel.dart';
+
+/// Normalized details for a tap inside [NosmaiCameraPreview].
+class NosmaiGameTapDetails {
+  const NosmaiGameTapDetails({
+    required this.normalizedX,
+    required this.normalizedY,
+    required this.localPosition,
+    required this.previewSize,
+  });
+
+  /// Horizontal preview position from 0 (left) to 1 (right).
+  final double normalizedX;
+
+  /// Vertical preview position from 0 (top) to 1 (bottom).
+  final double normalizedY;
+
+  /// Tap position in logical pixels relative to the preview.
+  final Offset localPosition;
+
+  /// Logical size of the tappable preview.
+  final Size previewSize;
+}
+
+/// Overrides automatic game-tap forwarding for a camera preview.
+typedef NosmaiGameTapCallback = FutureOr<void> Function(
+  NosmaiGameTapDetails tap,
+);
 
 class NosmaiCameraPreview extends StatefulWidget {
   const NosmaiCameraPreview({
@@ -12,6 +41,8 @@ class NosmaiCameraPreview extends StatefulWidget {
     this.onInitialized,
     this.onError,
     this.controller,
+    this.enableGameTapHandling = true,
+    this.onGameTap,
   });
 
   final double? width;
@@ -19,6 +50,20 @@ class NosmaiCameraPreview extends StatefulWidget {
   final VoidCallback? onInitialized;
   final Function(String error)? onError;
   final NosmaiCameraPreviewController? controller;
+
+  /// Whether this preview should capture taps for interactive game packages.
+  ///
+  /// Enabled by default. Set to false when the host needs the native preview to
+  /// receive touches directly.
+  final bool enableGameTapHandling;
+
+  /// Optional custom game-tap handler.
+  ///
+  /// When null, the preview automatically checks [NosmaiFlutter.isGameReady]
+  /// and forwards normalized coordinates through [NosmaiFlutter.sendGameTap].
+  /// When supplied, only this callback runs; the host decides whether and when
+  /// to forward the tap.
+  final NosmaiGameTapCallback? onGameTap;
 
   @override
   State<NosmaiCameraPreview> createState() => _NosmaiCameraPreviewState();
@@ -286,6 +331,74 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
     }
   }
 
+  Future<void> _handleGameTap(
+    TapUpDetails details,
+    Size previewSize,
+  ) async {
+    if (!widget.enableGameTapHandling ||
+        previewSize.width <= 0 ||
+        previewSize.height <= 0) {
+      return;
+    }
+
+    final tap = NosmaiGameTapDetails(
+      normalizedX: (details.localPosition.dx / previewSize.width)
+          .clamp(0.0, 1.0)
+          .toDouble(),
+      normalizedY: (details.localPosition.dy / previewSize.height)
+          .clamp(0.0, 1.0)
+          .toDouble(),
+      localPosition: details.localPosition,
+      previewSize: previewSize,
+    );
+
+    try {
+      final callback = widget.onGameTap;
+      if (callback != null) {
+        await callback(tap);
+        return;
+      }
+
+      if (await _nosmaiFlutter.isGameReady()) {
+        await _nosmaiFlutter.sendGameTap(
+          tap.normalizedX,
+          tap.normalizedY,
+        );
+      }
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'nosmai_effects_sdk',
+          context: ErrorDescription('while handling a camera game tap'),
+        ),
+      );
+    }
+  }
+
+  Widget _buildPreviewWithGameTapHandling({
+    required Widget preview,
+    required Size previewSize,
+  }) {
+    if (!widget.enableGameTapHandling) {
+      return preview;
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        preview,
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          excludeFromSemantics: true,
+          onTapUp: (details) => unawaited(_handleGameTap(details, previewSize)),
+          child: const SizedBox.expand(),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -301,11 +414,14 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
               width: resolvedSize.width,
               height: resolvedSize.height,
               child: ClipRect(
-                child: const RepaintBoundary(
-                  child: AndroidView(
-                    viewType: 'nosmai_camera_preview',
-                    layoutDirection: TextDirection.ltr,
-                    creationParamsCodec: StandardMessageCodec(),
+                child: _buildPreviewWithGameTapHandling(
+                  previewSize: resolvedSize,
+                  preview: const RepaintBoundary(
+                    child: AndroidView(
+                      viewType: 'nosmai_camera_preview',
+                      layoutDirection: TextDirection.ltr,
+                      creationParamsCodec: StandardMessageCodec(),
+                    ),
                   ),
                 ),
               ),
@@ -383,19 +499,22 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
           width: previewWidth,
           height: previewHeight,
           child: ClipRect(
-            child: UiKitView(
-              key: ValueKey(_viewKey),
-              viewType: 'nosmai_camera_preview',
-              layoutDirection: TextDirection.ltr,
-              onPlatformViewCreated: _handleIOSPlatformViewCreated,
-              creationParams: <String, dynamic>{
-                'width': previewWidth,
-                'height': previewHeight,
-                'deviceType': _getDeviceType(),
-                'safeAreaTop': padding.top,
-                'safeAreaBottom': padding.bottom,
-              },
-              creationParamsCodec: const StandardMessageCodec(),
+            child: _buildPreviewWithGameTapHandling(
+              previewSize: Size(previewWidth, previewHeight),
+              preview: UiKitView(
+                key: ValueKey(_viewKey),
+                viewType: 'nosmai_camera_preview',
+                layoutDirection: TextDirection.ltr,
+                onPlatformViewCreated: _handleIOSPlatformViewCreated,
+                creationParams: <String, dynamic>{
+                  'width': previewWidth,
+                  'height': previewHeight,
+                  'deviceType': _getDeviceType(),
+                  'safeAreaTop': padding.top,
+                  'safeAreaBottom': padding.bottom,
+                },
+                creationParamsCodec: const StandardMessageCodec(),
+              ),
             ),
           ),
         );

@@ -34,6 +34,7 @@
 @property(nonatomic, strong) dispatch_queue_t cacheQueue;
 @property(nonatomic, strong) dispatch_semaphore_t filterOperationSemaphore;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSMutableArray *> *pendingCloudDownloadResults;
+@property(nonatomic, assign) BOOL gameEventsEnabled;
 // Flash and Torch state tracking (NosmaiCamera doesn't provide getters)
 @property(nonatomic, assign) AVCaptureFlashMode currentFlashMode;
 @property(nonatomic, assign) AVCaptureTorchMode currentTorchMode;
@@ -254,6 +255,30 @@
   else if ([@"getActiveEffectInfo" isEqualToString:method]) {
     [self handleGetActiveEffectInfo:call result:result];
   }
+  else if ([@"isGameReady" isEqualToString:method]) {
+    [self handleIsGameReady:call result:result];
+  }
+  else if ([@"sendGameTap" isEqualToString:method]) {
+    [self handleSendGameTap:call result:result];
+  }
+  else if ([@"sendGameInput" isEqualToString:method]) {
+    [self handleSendGameInput:call result:result];
+  }
+  else if ([@"pauseGame" isEqualToString:method]) {
+    [[NosmaiCore shared].effects pauseGame];
+    result(nil);
+  }
+  else if ([@"resumeGame" isEqualToString:method]) {
+    [[NosmaiCore shared].effects resumeGame];
+    result(nil);
+  }
+  else if ([@"restartGame" isEqualToString:method]) {
+    [[NosmaiCore shared].effects restartGame];
+    result(nil);
+  }
+  else if ([@"setGameEventListenerEnabled" isEqualToString:method]) {
+    [self handleSetGameEventListenerEnabled:call result:result];
+  }
   else if ([@"removeEffect" isEqualToString:method]) {
     [self handleRemoveEffect:call result:result];
   }
@@ -283,6 +308,9 @@
   }
   else if ([@"getLocalBeautyEffects" isEqualToString:method]) {
     [self handleGetLocalBeautyEffects:call result:result];
+  }
+  else if ([@"getLocalGames" isEqualToString:method]) {
+    [self handleGetLocalGames:call result:result];
   }
   else if ([@"validateLocalFilters" isEqualToString:method]) {
     [self handleValidateLocalFilters:call result:result];
@@ -423,6 +451,7 @@
       if (success) {
         [[NosmaiCore shared].camera setDelegate:strongSelf];
         [[NosmaiCore shared].effects setDelegate:strongSelf];
+        [strongSelf updateGameEventHandler];
 
         [[NosmaiSDK sharedInstance] setDelegate:strongSelf];
         [NosmaiCameraPreviewView reattachActivePreviewIfReady];
@@ -1663,6 +1692,82 @@
 
 #pragma mark - File Loading and Camera Control
 
+- (void)updateGameEventHandler {
+  NosmaiEffectsEngine *effects = [NosmaiCore shared].effects;
+  effects.gameEventHandler = nil;
+  if (!self.gameEventsEnabled || !self.isInitialized) return;
+
+  __weak typeof(self) weakSelf = self;
+  effects.gameEventHandler = ^(NSDictionary<NSString *, id> *event) {
+    __strong typeof(weakSelf) strongSelf = weakSelf;
+    if (!strongSelf || !strongSelf.gameEventsEnabled || !event) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [strongSelf.channel invokeMethod:@"onGameEvent" arguments:event];
+    });
+  };
+}
+
+- (void)handleSetGameEventListenerEnabled:(FlutterMethodCall*)call
+                                   result:(FlutterResult)result {
+  self.gameEventsEnabled = [call.arguments[@"enabled"] boolValue];
+  [self updateGameEventHandler];
+  result(nil);
+}
+
+- (void)handleIsGameReady:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result(@NO);
+    return;
+  }
+  result(@([[NosmaiCore shared].effects isGameReady]));
+}
+
+- (BOOL)readGameCoordinate:(id)value output:(float*)output {
+  if (![value isKindOfClass:[NSNumber class]]) return NO;
+  double coordinate = [value doubleValue];
+  if (!isfinite(coordinate) || coordinate < 0.0 || coordinate > 1.0) return NO;
+  *output = (float)coordinate;
+  return YES;
+}
+
+- (void)handleSendGameTap:(FlutterMethodCall*)call result:(FlutterResult)result {
+  float x = 0.0f;
+  float y = 0.0f;
+  if (![self readGameCoordinate:call.arguments[@"x"] output:&x] ||
+      ![self readGameCoordinate:call.arguments[@"y"] output:&y]) {
+    result([FlutterError errorWithCode:@"INVALID_ARGUMENT"
+                               message:@"x and y must be finite values from 0 to 1"
+                               details:nil]);
+    return;
+  }
+  result(@([[NosmaiCore shared].effects sendGameTapAtNormalizedX:x y:y]));
+}
+
+- (void)handleSendGameInput:(FlutterMethodCall*)call result:(FlutterResult)result {
+  NSString *name = [call.arguments[@"name"] isKindOfClass:[NSString class]]
+      ? [call.arguments[@"name"] stringByTrimmingCharactersInSet:
+          [NSCharacterSet whitespaceAndNewlineCharacterSet]]
+      : nil;
+  float x = 0.0f;
+  float y = 0.0f;
+  NSNumber *rawValue = [call.arguments[@"value"] isKindOfClass:[NSNumber class]]
+      ? call.arguments[@"value"]
+      : nil;
+  if (name.length == 0 ||
+      ![self readGameCoordinate:call.arguments[@"x"] output:&x] ||
+      ![self readGameCoordinate:call.arguments[@"y"] output:&y] ||
+      !rawValue || !isfinite(rawValue.doubleValue)) {
+    result([FlutterError errorWithCode:@"INVALID_ARGUMENT"
+                               message:@"name, normalized x/y, and a finite value are required"
+                               details:nil]);
+    return;
+  }
+  result(@([[NosmaiCore shared].effects sendGameInput:name
+                                         normalizedX:x
+                                                   y:y
+                                               value:rawValue.floatValue]));
+}
+
 
 - (void)handleSwitchCamera:(FlutterMethodCall*)call result:(FlutterResult)result {
   if (!self.isInitialized) {
@@ -1788,6 +1893,7 @@
 
 - (void)handleCleanup:(FlutterMethodCall*)call result:(FlutterResult)result {
   @try {
+    [NosmaiCore shared].effects.gameEventHandler = nil;
     if (self.isInitialized) {
       [[NosmaiCore shared] cleanup];
     }
@@ -2574,6 +2680,9 @@
                    [typeSource isEqualToString:@"beauty-effect"] ||
                    [typeSource isEqualToString:@"beauty-effects"]) {
           filterTypeValue = @"beauty_effect";
+        } else if ([typeSource isEqualToString:@"game"] ||
+                   [typeSource isEqualToString:@"games"]) {
+          filterTypeValue = @"game";
         }
         enhancedFilter[@"filterType"] = filterTypeValue;
 
@@ -2670,6 +2779,10 @@
       [type isEqualToString:@"beautyeffect"]) {
     return @"beauty_effect";
   }
+  if ([type isEqualToString:@"game"] ||
+      [type isEqualToString:@"games"]) {
+    return @"games";
+  }
 
   return [(NSString *)rawType stringByTrimmingCharactersInSet:
       [NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -2739,7 +2852,8 @@
       @"filter": [NSMutableArray array],
       @"effect": [NSMutableArray array],
       @"background": [NSMutableArray array],
-      @"beauty_effect": [NSMutableArray array]
+      @"beauty_effect": [NSMutableArray array],
+      @"game": [NSMutableArray array]
     } mutableCopy];
 
     for (NSDictionary *filterInfo in allFilters) {
@@ -2790,6 +2904,8 @@
     nativeType = NosmaiFilterTypeBeautyEffect;
   } else if ([requestedType isEqualToString:@"background"]) {
     nativeType = NosmaiFilterTypeBackground;
+  } else if ([requestedType isEqualToString:@"game"]) {
+    nativeType = NosmaiFilterTypeGame;
   }
 
   void (^completion)(NSArray<NosmaiFilterInfo *> *, NSError *) =
@@ -2920,6 +3036,26 @@
   }
 }
 
+- (void)handleGetLocalGames:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED"
+                               message:@"SDK must be initialized before getting local games"
+                               details:@"Please call initWithLicense() first"]);
+    return;
+  }
+
+  @try {
+    NSArray<NSDictionary *> *allFilters = [self getFlutterLocalFilters];
+    NSArray<NSDictionary *> *games =
+        [self filterLocalFiltersByType:allFilters filterType:@"game"];
+    result([self sanitizeFiltersForFlutter:games]);
+  } @catch (NSException *exception) {
+    result([FlutterError errorWithCode:@"FILTER_LOAD_ERROR"
+                               message:[NSString stringWithFormat:@"Error loading local games: %@", exception.reason]
+                               details:exception.userInfo.description]);
+  }
+}
+
 #pragma mark - Filter Type Helpers
 
 - (NSArray<NSDictionary *> *)filterLocalFiltersByType:(NSArray<NSDictionary *> *)filters filterType:(NSString *)filterType {
@@ -2956,6 +3092,9 @@
       [type isEqualToString:@"beauty_effects"] ||
       [type isEqualToString:@"beauty"]) {
     return @"beauty_effect";
+  }
+  if ([type isEqualToString:@"game"] || [type isEqualToString:@"games"]) {
+    return @"game";
   }
   return @"effect";
 }
@@ -3966,6 +4105,7 @@
 }
 
 - (void)dealloc {
+  [NosmaiCore shared].effects.gameEventHandler = nil;
   if ([NosmaiCore shared].effects.delegate == self) {
     [[NosmaiCore shared].effects setDelegate:nil];
   }

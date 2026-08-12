@@ -37,6 +37,9 @@ class NosmaiFlutter {
   /// Stream controller for active .nosmai package snapshots
   StreamController<NosmaiActiveEffects>? _activeEffectsController;
 
+  /// Stream controller for active game outputs.
+  StreamController<NosmaiGameEvent>? _gameEventController;
+
   /// Whether the SDK has been initialized
   bool _isInitialized = false;
 
@@ -95,6 +98,21 @@ class NosmaiFlutter {
     return _activeEffectsController!.stream;
   }
 
+  /// JSON-safe events emitted by the active game package.
+  Stream<NosmaiGameEvent> get onGameEvent {
+    _gameEventController ??= StreamController<NosmaiGameEvent>.broadcast(
+      onListen: () {
+        unawaited(
+            NosmaiFlutterPlatform.instance.setGameEventListenerEnabled(true));
+      },
+      onCancel: () {
+        unawaited(
+            NosmaiFlutterPlatform.instance.setGameEventListenerEnabled(false));
+      },
+    );
+    return _gameEventController!.stream;
+  }
+
   // Internal dispatchers for native callbacks
   static void dispatchNativeError(NosmaiError error) {
     final inst = NosmaiFlutter.instance;
@@ -132,6 +150,12 @@ class NosmaiFlutter {
     inst._activeEffectsController ??=
         StreamController<NosmaiActiveEffects>.broadcast();
     inst._activeEffectsController!.add(state);
+  }
+
+  static void dispatchNativeGameEvent(NosmaiGameEvent event) {
+    final inst = NosmaiFlutter.instance;
+    if (inst._isDisposed || event.event.isEmpty) return;
+    inst._gameEventController?.add(event);
   }
 
   /// Whether the SDK is initialized
@@ -272,7 +296,7 @@ class NosmaiFlutter {
   /// Apply any external `.nosmai` package.
   ///
   /// This is the unified production apply method for `filter`, `effect`,
-  /// `beauty_effect`, and `background` packages. The native SDK reads the
+  /// `beauty_effect`, `background`, and `game` packages. The native SDK reads the
   /// internal manifest and routes the package to the correct render slot.
   ///
   /// Use the returned value for the apply result, and use
@@ -324,7 +348,7 @@ class NosmaiFlutter {
     return await NosmaiFlutterPlatform.instance.getActiveFilterInfo();
   }
 
-  /// Active AR slot metadata. This may be an `effect` or `beauty_effect`.
+  /// Active AR slot metadata. This may be an `effect`, `beauty_effect`, or `game`.
   Future<NosmaiFilter?> getActiveEffectInfo() async {
     _checkInitialized();
     return await NosmaiFlutterPlatform.instance.getActiveEffectInfo();
@@ -343,6 +367,49 @@ class NosmaiFlutter {
   Future<bool> removeEffect(NosmaiFilter filter) async {
     _checkInitialized();
     return await NosmaiFlutterPlatform.instance.removeEffect(filter);
+  }
+
+  /// True when an initialized game package owns the active AR slot.
+  Future<bool> isGameReady() async {
+    _checkInitialized();
+    return NosmaiFlutterPlatform.instance.isGameReady();
+  }
+
+  /// Send normalized preview coordinates to the active game.
+  Future<bool> sendGameTap(double normalizedX, double normalizedY) async {
+    _checkInitialized();
+    return NosmaiFlutterPlatform.instance.sendGameTap(normalizedX, normalizedY);
+  }
+
+  /// Send a named input to the active game.
+  Future<bool> sendGameInput(
+    String name, {
+    double normalizedX = 0,
+    double normalizedY = 0,
+    double value = 1,
+  }) async {
+    _checkInitialized();
+    return NosmaiFlutterPlatform.instance.sendGameInput(
+      name,
+      normalizedX,
+      normalizedY,
+      value,
+    );
+  }
+
+  Future<void> pauseGame() async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance.pauseGame();
+  }
+
+  Future<void> resumeGame() async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance.resumeGame();
+  }
+
+  Future<void> restartGame() async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance.restartGame();
   }
 
   /// Get list of available cloud filters with optional pagination support
@@ -396,6 +463,10 @@ class NosmaiFlutter {
   /// );
   /// final beautyEffects = await nosmai.getCloudFilters(
   ///   filterType: NosmaiCloudFilterType.beautyEffect,
+  ///   page: 1,
+  /// );
+  /// final games = await nosmai.getCloudFilters(
+  ///   filterType: NosmaiCloudFilterType.games,
   ///   page: 1,
   /// );
   /// ```
@@ -531,7 +602,7 @@ class NosmaiFlutter {
 
   /// Get all production local .nosmai filters grouped by filterType.
   ///
-  /// Keys are usually `filter`, `effect`, `background`, and `beauty_effect`.
+  /// Keys are usually `filter`, `effect`, `background`, `beauty_effect`, and `game`.
   Future<Map<String, List<NosmaiFilter>>> getAllLocalFilters(
       {bool forceRefresh = false}) async {
     _checkInitialized();
@@ -566,7 +637,7 @@ class NosmaiFlutter {
   ///
   /// Pass `type: null` to receive all debug filters. Production apps should use
   /// [getLocalFilters], [getLocalEffects], [getLocalBackgrounds],
-  /// [getLocalBeautyEffects], or [getAllLocalFilters].
+  /// [getLocalBeautyEffects], [getLocalGames], or [getAllLocalFilters].
   Future<List<NosmaiFilter>> getDebugFilters({
     NosmaiLocalFilterType? type,
   }) async {
@@ -674,6 +745,23 @@ class NosmaiFlutter {
       throw NosmaiError.filter(
         type: _parseErrorType(e.code),
         message: e.message ?? 'Failed to get local beauty effects',
+        details: e.details?.toString(),
+      );
+    }
+  }
+
+  /// Get local interactive game packages.
+  Future<List<NosmaiFilter>> getLocalGames() async {
+    _checkInitialized();
+    try {
+      final games = await NosmaiFlutterPlatform.instance.getLocalGames();
+      return games
+          .map((game) => NosmaiFilter.fromMap(Map<String, dynamic>.from(game)))
+          .toList();
+    } on PlatformException catch (e) {
+      throw NosmaiError.filter(
+        type: _parseErrorType(e.code),
+        message: e.message ?? 'Failed to get local games',
         details: e.details?.toString(),
       );
     }
@@ -828,7 +916,7 @@ class NosmaiFlutter {
 
   /// Clear only the regular filter
   ///
-  /// Keeps AR effect, beauty effects, and background segmentation intact.
+  /// Keeps AR effect, beauty effects, games, and background segmentation intact.
   ///
   /// Example:
   /// ```dart
@@ -2140,12 +2228,14 @@ class NosmaiFlutter {
     _recordingProgressController?.close();
     _licenseStatusController?.close();
     _activeEffectsController?.close();
+    _gameEventController?.close();
 
     _errorController = null;
     _downloadProgressController = null;
     _recordingProgressController = null;
     _licenseStatusController = null;
     _activeEffectsController = null;
+    _gameEventController = null;
   }
 
   /// Internal async cleanup

@@ -5,9 +5,12 @@
 - Initial release as `nosmai_effects_sdk`.
 - Preserves the production API and functionality from `nosmai_camera_sdk` 3.0.6.
 - Supports real-time AR effects, beauty and makeup controls, backgrounds,
-  camera capture, local filters, and cloud filters on Android and iOS.
-- Uses the separately distributed Nosmai Android SDK and the
-  `NosmaiCameraSDK` CocoaPods dependency on iOS.
+  interactive camera games, camera capture, local filters, and cloud filters
+  on Android and iOS.
+- Adds local/cloud game discovery, game lifecycle and input APIs, typed game
+  event streams, and automatic tap handling in `NosmaiCameraPreview`.
+- Uses Android Effects SDK `3.0.2` and the `NosmaiCameraSDK 3.0.2` CocoaPods
+  dependency on iOS.
 
 ## Previous `nosmai_camera_sdk` releases
 

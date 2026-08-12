@@ -1,7 +1,8 @@
 /// Nosmai Effects SDK for Flutter.
 ///
-/// Provides real-time AR effects, beauty filters, backgrounds, camera capture,
-/// and cloud filter integration for supported Android and iOS devices.
+/// Provides real-time AR effects, interactive camera games, beauty filters,
+/// backgrounds, camera capture, and cloud filter integration for supported
+/// Android and iOS devices.
 library;
 
 export 'src/types/enums.dart';

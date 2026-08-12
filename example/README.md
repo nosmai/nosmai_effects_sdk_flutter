@@ -2,8 +2,8 @@
 
 This application demonstrates the production Flutter plugin flow on Android
 and iOS, including camera preview, photo and video capture, cloud filters,
-backgrounds, beauty controls, and camera switching. It intentionally ships
-without local `.nosmai` filter binaries.
+backgrounds, interactive games, beauty controls, and camera switching. It
+intentionally ships without local `.nosmai` filter binaries.
 
 ## Requirements
 
@@ -17,10 +17,10 @@ The iOS simulator is not supported. Use a physical ARM64 iOS device.
 
 ## Native SDK Setup
 
-iOS resolves `NosmaiCameraSDK 3.0.0` automatically through CocoaPods.
+iOS resolves `NosmaiCameraSDK 3.0.2` automatically through CocoaPods.
 
-For Android, download `nosmai-sdk-3.0.1.aar` and `SHA256SUMS` from the
-[Nosmai Effects SDK for Android v3.0.1 release](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.1),
+For Android, download `nosmai-sdk-3.0.2.aar` and `SHA256SUMS` from the
+[Nosmai Effects SDK for Android v3.0.2 release](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.2),
 verify the checksum, rename the AAR to `nosmai-release.aar`, and place it at:
 
 ```text
@@ -74,8 +74,8 @@ flutter build ios --release \
 - Repeated download taps are disabled while a cloud filter is downloading.
 - Add licensed local filters in the consuming application; none are bundled
   with this package or example.
-- External effects, filters, beauty effects, and backgrounds follow the native
-  SDK compatibility rules.
+- External effects, filters, beauty effects, backgrounds, and games follow the
+  native SDK compatibility rules.
 - Use a physical device for camera, rendering, recording, and performance
   validation.
 

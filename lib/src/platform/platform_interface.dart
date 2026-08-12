@@ -56,17 +56,17 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('removeAllFilters() has not been implemented.');
   }
 
-  /// Clear only the AR effect (keeps regular filter, beauty, background)
+  /// Clear the AR slot (clears an active effect, beauty effect, or game).
   Future<void> clearAREffect() {
     throw UnimplementedError('clearAREffect() has not been implemented.');
   }
 
-  /// Clear only the regular filter (keeps AR effect, beauty, background)
+  /// Clear only the regular filter (keeps AR effect, beauty, game, background)
   Future<void> clearFilter() {
     throw UnimplementedError('clearFilter() has not been implemented.');
   }
 
-  /// Clear everything - AR effects, filters, beauty, background (nuclear option)
+  /// Clear everything - AR effects, filters, beauty, games, background (nuclear option)
   Future<void> clearAll() {
     throw UnimplementedError('clearAll() has not been implemented.');
   }
@@ -118,7 +118,7 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('getActiveFilterInfo() has not been implemented.');
   }
 
-  /// Active AR slot metadata. This may be an effect or beauty_effect.
+  /// Active AR slot metadata. This may be an effect, beauty_effect, or game.
   Future<NosmaiFilter?> getActiveEffectInfo() {
     throw UnimplementedError('getActiveEffectInfo() has not been implemented.');
   }
@@ -126,6 +126,36 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
   /// Remove a specific external package using its manifest type.
   Future<bool> removeEffect(NosmaiFilter filter) {
     throw UnimplementedError('removeEffect() has not been implemented.');
+  }
+
+  Future<bool> isGameReady() {
+    throw UnimplementedError('isGameReady() has not been implemented.');
+  }
+
+  Future<bool> sendGameTap(double normalizedX, double normalizedY) {
+    throw UnimplementedError('sendGameTap() has not been implemented.');
+  }
+
+  Future<bool> sendGameInput(
+      String name, double normalizedX, double normalizedY, double value) {
+    throw UnimplementedError('sendGameInput() has not been implemented.');
+  }
+
+  Future<void> pauseGame() {
+    throw UnimplementedError('pauseGame() has not been implemented.');
+  }
+
+  Future<void> resumeGame() {
+    throw UnimplementedError('resumeGame() has not been implemented.');
+  }
+
+  Future<void> restartGame() {
+    throw UnimplementedError('restartGame() has not been implemented.');
+  }
+
+  Future<void> setGameEventListenerEnabled(bool enabled) {
+    throw UnimplementedError(
+        'setGameEventListenerEnabled() has not been implemented.');
   }
 
   /// Get cloud filters with optional pagination support
@@ -193,6 +223,11 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
   Future<List<dynamic>> getLocalBeautyEffects() {
     throw UnimplementedError(
         'getLocalBeautyEffects() has not been implemented.');
+  }
+
+  /// Get local interactive games with filterType "game".
+  Future<List<dynamic>> getLocalGames() {
+    throw UnimplementedError('getLocalGames() has not been implemented.');
   }
 
   /// Clear the local filters cache

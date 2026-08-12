@@ -216,6 +216,17 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
           // ignore malformed callback
         }
         break;
+      case 'onGameEvent':
+        try {
+          final Map<String, dynamic> args =
+              Map<String, dynamic>.from(call.arguments);
+          NosmaiFlutter.dispatchNativeGameEvent(
+            NosmaiGameEvent.fromMap(args),
+          );
+        } catch (_) {
+          // ignore malformed callback
+        }
+        break;
     }
   }
 
@@ -429,6 +440,44 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
   }
 
   @override
+  Future<bool> isGameReady() async =>
+      await methodChannel.invokeMethod<bool>('isGameReady') ?? false;
+
+  @override
+  Future<bool> sendGameTap(double normalizedX, double normalizedY) async =>
+      await methodChannel.invokeMethod<bool>('sendGameTap', {
+        'x': normalizedX,
+        'y': normalizedY,
+      }) ??
+      false;
+
+  @override
+  Future<bool> sendGameInput(String name, double normalizedX,
+          double normalizedY, double value) async =>
+      await methodChannel.invokeMethod<bool>('sendGameInput', {
+        'name': name,
+        'x': normalizedX,
+        'y': normalizedY,
+        'value': value,
+      }) ??
+      false;
+
+  @override
+  Future<void> pauseGame() => methodChannel.invokeMethod<void>('pauseGame');
+
+  @override
+  Future<void> resumeGame() => methodChannel.invokeMethod<void>('resumeGame');
+
+  @override
+  Future<void> restartGame() => methodChannel.invokeMethod<void>('restartGame');
+
+  @override
+  Future<void> setGameEventListenerEnabled(bool enabled) =>
+      methodChannel.invokeMethod<void>('setGameEventListenerEnabled', {
+        'enabled': enabled,
+      });
+
+  @override
   Future<Map<String, dynamic>> getCloudFiltersWithOptions({
     NosmaiCloudFilterType? filterType,
     NosmaiCloudFilterVersion version = NosmaiCloudFilterVersion.v2,
@@ -604,6 +653,16 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
     } catch (_) {
       rethrow;
     }
+  }
+
+  @override
+  Future<List<dynamic>> getLocalGames() async {
+    final assetPaths = await _loadFlutterAssetPaths();
+    final result = await methodChannel.invokeMethod<List<dynamic>>(
+      'getLocalGames',
+      {'assetPaths': assetPaths},
+    );
+    return result ?? [];
   }
 
   @override

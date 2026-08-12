@@ -28,6 +28,9 @@ enum NosmaiFilterCategory {
   /// Preset beauty filter combinations
   beautyEffect,
 
+  /// Interactive game packages
+  game,
+
   /// Legacy beauty filters (deprecated, use beautyEffect instead)
   @Deprecated('Use beautyEffect instead')
   beauty,
@@ -37,7 +40,7 @@ enum NosmaiFilterCategory {
 }
 
 /// Filter source type enumeration
-enum NosmaiFilterSourceType { filter, effect, background, beautyEffect }
+enum NosmaiFilterSourceType { filter, effect, background, beautyEffect, game }
 
 /// Local filter type enumeration
 ///
@@ -54,7 +57,10 @@ enum NosmaiLocalFilterType {
   background('background'),
 
   /// Preset beauty filter combinations
-  beautyEffect('beauty_effect');
+  beautyEffect('beauty_effect'),
+
+  /// Interactive game packages
+  game('game');
 
   final String value;
   const NosmaiLocalFilterType(this.value);
@@ -72,6 +78,9 @@ enum NosmaiLocalFilterType {
       case 'beautyeffect':
       case 'beauty-effect':
         return NosmaiLocalFilterType.beautyEffect;
+      case 'game':
+      case 'games':
+        return NosmaiLocalFilterType.game;
       default:
         return NosmaiLocalFilterType.effect; // Default to effect
     }
@@ -103,7 +112,10 @@ enum NosmaiCloudFilterType {
   background('bg'),
 
   /// Beauty packages such as makeup and face beauty effects
-  beautyEffect('beauty_effect');
+  beautyEffect('beauty_effect'),
+
+  /// Interactive game packages
+  games('games');
 
   final String apiValue;
   const NosmaiCloudFilterType(this.apiValue);

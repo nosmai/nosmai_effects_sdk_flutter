@@ -46,7 +46,9 @@ String _normalizeFilterType(dynamic value) {
   final raw = value?.toString().trim().toLowerCase();
   if (raw == null || raw.isEmpty) return '';
   final normalized = raw.replaceAll('-', '_');
-  return normalized == 'beautyeffect' ? 'beauty_effect' : normalized;
+  if (normalized == 'beautyeffect') return 'beauty_effect';
+  if (normalized == 'games') return 'game';
+  return normalized;
 }
 
 /// Filter information for both local and cloud filters
@@ -132,6 +134,9 @@ class NosmaiFilter {
   bool get isBeautyEffect =>
       filterCategory == NosmaiFilterCategory.beautyEffect;
 
+  /// Check if this is an interactive game package.
+  bool get isGame => filterCategory == NosmaiFilterCategory.game;
+
   /// Get the local filter type based on filterCategory
   NosmaiLocalFilterType get localFilterType {
     switch (filterCategory) {
@@ -143,6 +148,8 @@ class NosmaiFilter {
         return NosmaiLocalFilterType.background;
       case NosmaiFilterCategory.beautyEffect:
         return NosmaiLocalFilterType.beautyEffect;
+      case NosmaiFilterCategory.game:
+        return NosmaiLocalFilterType.game;
       // ignore: deprecated_member_use_from_same_package
       case NosmaiFilterCategory.beauty:
         return NosmaiLocalFilterType.beautyEffect;
@@ -169,6 +176,9 @@ class NosmaiFilter {
         break;
       case 'beauty_effect':
         parsedSourceType = NosmaiFilterSourceType.beautyEffect;
+        break;
+      case 'game':
+        parsedSourceType = NosmaiFilterSourceType.game;
         break;
       default:
         // Default to effect for backward compatibility
@@ -199,6 +209,9 @@ class NosmaiFilter {
         case 'beauty':
           // ignore: deprecated_member_use_from_same_package
           parsedFilterCategory = NosmaiFilterCategory.beauty;
+          break;
+        case 'game':
+          parsedFilterCategory = NosmaiFilterCategory.game;
           break;
         default:
           parsedFilterCategory = NosmaiFilterCategory.unknown;
@@ -293,6 +306,48 @@ class NosmaiFilter {
   String toString() {
     return 'NosmaiFilter(id: $id, name: $name, type: $type, filterCategory: $filterCategory, sourceType: $sourceType)';
   }
+}
+
+/// JSON-safe event emitted by an active `type: "game"` package.
+class NosmaiGameEvent {
+  final String event;
+  final String game;
+  final int sequence;
+  final Map<String, dynamic> data;
+
+  const NosmaiGameEvent({
+    required this.event,
+    required this.game,
+    required this.sequence,
+    required this.data,
+  });
+
+  factory NosmaiGameEvent.fromMap(Map<String, dynamic> map) {
+    final event = map['event']?.toString().trim() ?? '';
+    final game = map['game']?.toString().trim() ?? '';
+    final sequence = map['sequence'];
+    final rawData = map['data'];
+    if (event.isEmpty ||
+        game.isEmpty ||
+        sequence is! int ||
+        sequence < 0 ||
+        rawData is! Map) {
+      throw const FormatException('Invalid Nosmai game event payload');
+    }
+    return NosmaiGameEvent(
+      event: event,
+      game: game,
+      sequence: sequence,
+      data: Map<String, dynamic>.from(rawData),
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+        'event': event,
+        'game': game,
+        'sequence': sequence,
+        'data': data,
+      };
 }
 
 /// Snapshot of active `.nosmai` packages.
@@ -390,7 +445,8 @@ class NosmaiActiveEffects {
   bool get hasFilter => activeFilterPath != null;
   bool get hasEffect =>
       activeEffectPath != null &&
-      activeEffect?.sourceType != NosmaiFilterSourceType.beautyEffect;
+      activeEffect?.sourceType != NosmaiFilterSourceType.beautyEffect &&
+      activeEffect?.sourceType != NosmaiFilterSourceType.game;
   bool get hasBeautyEffectPackage => activeBeautyEffect != null;
   bool get hasAnyBeauty => hasBeautyEffect || hasBuiltInBeauty;
   bool get hasFilterPackage => activeFilterPath != null;
@@ -406,6 +462,9 @@ class NosmaiActiveEffects {
       activeEffect?.filterCategory == NosmaiFilterCategory.beautyEffect;
   NosmaiFilter? get activeBeautyEffect =>
       activeEffectIsBeautyEffect ? activeEffect : null;
+  bool get hasActiveGame =>
+      activeEffect?.sourceType == NosmaiFilterSourceType.game ||
+      activeEffect?.filterCategory == NosmaiFilterCategory.game;
 
   Map<String, dynamic> toMap() {
     return {

@@ -3,8 +3,8 @@
 # Nosmai Effects SDK for Flutter
 
 Add real-time AR effects, beauty filters, digital makeup, background replacement,
-camera capture, and cloud filters to Flutter applications through one SDK for
-Android and iOS.
+interactive camera games, camera capture, and cloud filters to Flutter
+applications through one SDK for Android and iOS.
 
 ## Built for
 
@@ -28,6 +28,7 @@ Nosmai Effects can be used in:
 - Face slimming, eye size, nose, chin, jaw, lips, forehead, and brow controls
 - LUT filters, brightness, contrast, hue, saturation, RGB, and white balance
 - Background blur, color, image, video, and packaged background effects
+- Interactive `.nosmai` games with touch/face input and typed event streams
 - Local and cloud-based `.nosmai` filters
 - Cloud filter browsing, pagination, download, caching, and removal
 - Front and back camera switching
@@ -74,7 +75,8 @@ A valid Nosmai license key is required. Create and manage projects through the
 
 ## Native SDK distribution
 
-- iOS resolves the licensed `NosmaiCameraSDK` dependency through CocoaPods.
+- Version `1.0.0` uses Android Effects SDK `3.0.2` and resolves
+  `NosmaiCameraSDK 3.0.2` through CocoaPods on iOS.
 - Android applications download the proprietary AAR and `SHA256SUMS` from
   [Nosmai Effects SDK for Android releases](https://github.com/nosmai/nosmai_effects_sdk_android/releases/latest).
 - Native SDK binaries and licensed `.nosmai` assets are not bundled in the

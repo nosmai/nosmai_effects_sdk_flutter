@@ -115,6 +115,16 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             } catch (_: Throwable) {}
         }
     }
+    private val gameEventListener = NosmaiEffects.GameEventListener { event ->
+        runOnMain {
+            try {
+                if (isEngineAttached && ::channel.isInitialized) {
+                    channel.invokeMethod("onGameEvent", event.toMap())
+                }
+            } catch (_: Throwable) {}
+        }
+    }
+    @Volatile private var gameEventsEnabled = false
 
     private fun runOnMain(block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) block() else mainHandler.post(block)
@@ -438,6 +448,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
 
     override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
         isEngineAttached = false
+        setGameEventsEnabled(false)
         unregisterPipelineStateListener()
         channel.setMethodCallHandler(null)
         try { surface?.release() } catch (_: Throwable) {}
@@ -454,6 +465,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "getLocalEffects" -> handleGetLocalFiltersByType(call, "effect", result)
             "getLocalBackgrounds" -> handleGetLocalFiltersByType(call, "background", result)
             "getLocalBeautyEffects" -> handleGetLocalFiltersByType(call, "beauty_effect", result)
+            "getLocalGames" -> handleGetLocalFiltersByType(call, "game", result)
             "applyEffect" -> handleApplyNosmaiPackage(call, "effectPath", result)
             "applyFilter" -> handleApplyNosmaiPackage(call, "filterPath", result)
             "getActiveEffects" -> handleGetActiveEffects(result)
@@ -461,6 +473,16 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "getActiveFilterInfo" -> handleGetActiveFilterInfo(result)
             "getActiveEffectInfo" -> handleGetActiveEffectInfo(result)
             "removeEffect" -> handleRemoveEffect(call, result)
+            "isGameReady" -> result.success(NosmaiEffects.isGameReady())
+            "sendGameTap" -> handleSendGameTap(call, result)
+            "sendGameInput" -> handleSendGameInput(call, result)
+            "pauseGame" -> { NosmaiEffects.pauseGame(); result.success(null) }
+            "resumeGame" -> { NosmaiEffects.resumeGame(); result.success(null) }
+            "restartGame" -> { NosmaiEffects.restartGame(); result.success(null) }
+            "setGameEventListenerEnabled" -> {
+                setGameEventsEnabled(call.argument<Boolean>("enabled") == true)
+                result.success(null)
+            }
             "initWithLicense" -> handleInitWithLicense(call, result)
             "createTexture", "createPreviewTexture" -> handleCreateTexture(result)
             "setRenderSurface" -> handleSetRenderSurface(call, result)
@@ -577,6 +599,58 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
         } catch (t: Throwable) {
             NosmaiLog.w(TAG, "Unable to remove active effects listener: ${t.message}")
         }
+    }
+
+    private fun setGameEventsEnabled(enabled: Boolean) {
+        if (gameEventsEnabled == enabled) return
+        gameEventsEnabled = enabled
+        try {
+            if (enabled) {
+                NosmaiEffects.addGameEventListener(gameEventListener)
+            } else {
+                NosmaiEffects.removeGameEventListener(gameEventListener)
+            }
+        } catch (t: Throwable) {
+            NosmaiLog.w(TAG, "Unable to update game event listener: ${t.message}")
+        }
+    }
+
+    private fun gameCoordinate(call: MethodCall, key: String): Float? {
+        val value = call.argument<Number>(key)?.toDouble() ?: return null
+        return value.takeIf { it.isFinite() && it in 0.0..1.0 }?.toFloat()
+    }
+
+    private fun handleSendGameTap(call: MethodCall, result: Result) {
+        val x = gameCoordinate(call, "x")
+        val y = gameCoordinate(call, "y")
+        if (x == null || y == null) {
+            result.error(
+                "INVALID_ARGUMENT",
+                "x and y must be finite values from 0 to 1",
+                null
+            )
+            return
+        }
+        result.success(NosmaiEffects.sendGameTap(x, y))
+    }
+
+    private fun handleSendGameInput(call: MethodCall, result: Result) {
+        val name = call.argument<String>("name")?.trim()
+        val x = gameCoordinate(call, "x")
+        val y = gameCoordinate(call, "y")
+        val rawValue = call.argument<Number>("value")?.toDouble()
+        if (name.isNullOrEmpty() || x == null || y == null ||
+            rawValue == null || !rawValue.isFinite()) {
+            result.error(
+                "INVALID_ARGUMENT",
+                "name, normalized x/y, and a finite value are required",
+                null
+            )
+            return
+        }
+        result.success(
+            NosmaiEffects.sendGameInput(name, x, y, rawValue.toFloat())
+        )
     }
 
     private fun modeName(mode: NosmaiPipelineState.Mode?): String {
@@ -760,7 +834,8 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
                 "filter" to mutableListOf(),
                 "effect" to mutableListOf(),
                 "background" to mutableListOf(),
-                "beauty_effect" to mutableListOf()
+                "beauty_effect" to mutableListOf(),
+                "game" to mutableListOf()
             )
             getNosmaiFilters().forEach { filter ->
                 val type = normalizeFilterType(filter["filterType"]?.toString())
@@ -1436,7 +1511,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
                     val cleared = when (normalized) {
                         "filter" -> state.activeFilterPath.isNullOrBlank()
                         "background" -> state.activeBackgroundPackagePath.isNullOrBlank()
-                        "beauty_effect", "effect" ->
+                        "beauty_effect", "effect", "game" ->
                             state.activeEffectPath.isNullOrBlank()
                         else -> !NosmaiEffectsEngine.hasActiveEffect()
                     }
@@ -2210,6 +2285,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "special_effects", "effect" -> "effect"
             "beauty", "beauty_effects", "beauty_effect", "makeup" -> "beauty_effect"
             "background", "backgrounds", "bg" -> "background"
+            "game", "games" -> "game"
             else -> "effect"
         }
     }
@@ -2239,6 +2315,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
                     "filter" -> "filter"
                     "bg" -> "background"
                     "beauty_effect" -> "beauty_effect"
+                    "games" -> "game"
                     else -> null
                 }
                 val out = ArrayList<Map<String, Any?>>()
@@ -2318,6 +2395,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "filter", "filters", "fx-and-filter", "fx-and-filters", "cloud-filter", "cloud-filters" -> "filter"
             "background", "backgrounds", "bg" -> "bg"
             "beauty", "beauty-effect", "beauty-effects", "beautyeffect" -> "beauty_effect"
+            "game", "games" -> "games"
             else -> normalized
         }
     }
@@ -2906,6 +2984,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
         try {
             NosmaiLog.d(TAG, "🗑️ handleDispose: Full plugin disposal")
             cleanupInProgress = true
+            setGameEventsEnabled(false)
 
             try {
                 // 1. Stop camera hardware first
@@ -3465,6 +3544,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "effect" -> "effect"
             "background", "bg" -> "background"
             "beauty_effect", "beautyeffect", "beauty_effects", "beauty" -> "beauty_effect"
+            "game", "games" -> "game"
             else -> "effect"
         }
     }
@@ -3487,7 +3567,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
                 if (!jsonStr.isNullOrBlank()) {
                     val json = JSONObject(jsonStr)
                     val t = normalizeFilterType(json.optString("filterType", json.optString("type", "")))
-                    if (t == "filter" || t == "effect" || t == "beauty_effect" || t == "background") ftype = t
+                    if (t == "filter" || t == "effect" || t == "beauty_effect" || t == "background" || t == "game") ftype = t
                     json.optString("displayName").takeIf { it.isNotBlank() }?.let { display = it }
                     json.optString("description").takeIf { it.isNotBlank() }?.let { desc = it }
                     if (json.has("preview")) hasPrev = true

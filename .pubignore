@@ -4,4 +4,16 @@
 /build/
 /android/libs/
 /ios/Framework/
+/example/android/app/libs/
+/example/ios/Pods/
+/example/ios/.symlinks/
+/example/ios/Flutter/ephemeral/
+/example/.dart_tool/
+/example/build/
+**/*.aar
+**/*.framework/
+**/*.xcframework/
+**/*.nosmai
+**/.env
+**/.env.*
 **/.DS_Store

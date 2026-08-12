@@ -77,6 +77,98 @@ void main() {
     );
   });
 
+  test('game cloud filters use the games API bucket', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'getCloudFilters');
+      expect(call.arguments['filterType'], 'games');
+      return <String, dynamic>{'filters': <dynamic>[], 'pagination': null};
+    });
+
+    await platform.getCloudFiltersWithOptions(
+      filterType: NosmaiCloudFilterType.games,
+      page: 1,
+      fetchAllPages: false,
+    );
+  });
+
+  test('game model keeps the game package type', () {
+    final game = NosmaiFilter.fromMap({
+      'id': 'fruit-catcher',
+      'name': 'Fruit Catcher',
+      'type': 'cloud',
+      'filterType': 'games',
+    });
+
+    expect(game.isGame, isTrue);
+    expect(game.sourceType, NosmaiFilterSourceType.game);
+    expect(game.localFilterType, NosmaiLocalFilterType.game);
+  });
+
+  test('game events require a complete JSON-safe envelope', () {
+    final event = NosmaiGameEvent.fromMap({
+      'event': 'scoreChanged',
+      'game': 'fruit-catcher',
+      'sequence': 7,
+      'data': {'score': 42},
+    });
+
+    expect(event.event, 'scoreChanged');
+    expect(event.sequence, 7);
+    expect(event.data, {'score': 42});
+    expect(
+      () => NosmaiGameEvent.fromMap({
+        'event': '',
+        'game': 'fruit-catcher',
+        'sequence': 8,
+        'data': <String, dynamic>{},
+      }),
+      throwsFormatException,
+    );
+  });
+
+  test('active game is not reported as a normal effect', () {
+    final game = NosmaiFilter.fromMap({
+      'id': 'fruit-catcher',
+      'type': 'local',
+      'filterType': 'game',
+    });
+    final state = NosmaiActiveEffects(
+      mode: 1,
+      modeName: 'effectsFilters',
+      activeMode: NosmaiActiveEffectsMode.effectsFilters,
+      activeEffectPath: '/filters/fruit-catcher.nosmai',
+      hasBackground: false,
+      backgroundSource: 0,
+      backgroundSourceName: 'none',
+      activeBackgroundSource: NosmaiActiveBackgroundSource.none,
+      hasBeautyEffect: false,
+      hasManualBackground: false,
+      activeEffect: game,
+    );
+
+    expect(state.hasActiveGame, isTrue);
+    expect(state.hasEffect, isFalse);
+    expect(state.hasArPackage, isTrue);
+  });
+
+  test('game input uses normalized method-channel arguments', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'sendGameInput');
+      expect(call.arguments, {
+        'name': 'flap',
+        'x': 0.25,
+        'y': 0.75,
+        'value': 1.0,
+      });
+      return true;
+    });
+
+    await expectLater(
+      platform.sendGameInput('flap', 0.25, 0.75, 1.0),
+      completion(isTrue),
+    );
+  });
+
   test('cloud model keeps backend id but exposes downloadable filter id', () {
     final filter = NosmaiFilter.fromMap({
       'id': 'backend-record-uuid',
