@@ -1,6 +1,6 @@
 name: nosmai_effects_sdk
 description: Official Flutter plugin for real-time Nosmai AR effects, beauty filters, backgrounds, interactive camera games, capture, and cloud filters.
-version: 1.0.0
+version: 1.0.1
 homepage: https://nosmai.com
 repository: https://github.com/nosmai/nosmai_effects_sdk_flutter
 documentation: https://nosmai.com/docs/effects/flutter/

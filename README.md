@@ -75,8 +75,8 @@ A valid Nosmai license key is required. Create and manage projects through the
 
 ## Native SDK distribution
 
-- Version `1.0.0` uses Android Effects SDK `3.0.2` and resolves
-  `NosmaiCameraSDK 3.0.2` through CocoaPods on iOS.
+- Version `1.0.1` uses Android Effects SDK `3.0.3` and resolves
+  `NosmaiCameraSDK 3.0.3` through CocoaPods on iOS.
 - Android applications download the proprietary AAR and `SHA256SUMS` from
   [Nosmai Effects SDK for Android releases](https://github.com/nosmai/nosmai_effects_sdk_android/releases/latest).
 - Native SDK binaries and licensed `.nosmai` assets are not bundled in the

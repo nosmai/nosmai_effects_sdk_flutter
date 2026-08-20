@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1
+
+- Updated compatibility to Android Effects SDK `3.0.3` and
+  `NosmaiCameraSDK 3.0.3` on iOS.
+- Adopted the native license feature enforcement updates without changing the
+  public Dart API or the existing cloud-filter workflow.
+
 ## 1.0.0
 
 - Initial release as `nosmai_effects_sdk`.
