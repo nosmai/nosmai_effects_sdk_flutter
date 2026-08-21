@@ -7,10 +7,10 @@ Pod::Spec.new do |s|
     interactive camera games, and visual enhancements to live camera frames on
     supported iOS devices.
 
-    To use the SDK, developers must register a project through the Nosmai portal and obtain a unique API key.
+    To use the SDK, developers must register a project through Nosmai Console and obtain a unique API key.
     The API key is used to initialize the camera view and enable filtering capabilities.
   DESC
-  s.homepage         = 'https://nosmai.com/docs/effects/flutter/'
+  s.homepage         = 'https://nosmai.com/docs/effects/platforms/flutter/'
   s.license          = { :type => 'Commercial', :file => '../LICENSE' }
   s.author           = { 'Nosmai' => 'admin@nosmai.com' }
   s.source           = { :git => 'https://github.com/nosmai/nosmai_effects_sdk_flutter.git', :tag => s.version.to_s }

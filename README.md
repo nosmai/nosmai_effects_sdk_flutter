@@ -62,13 +62,14 @@ Flutter integration guide for licensing, native setup, permissions, camera
 lifecycle, filters, capture, and production requirements.
 
 - [Introduction](https://nosmai.com/docs/effects/introduction/)
-- [Flutter integration guide](https://nosmai.com/docs/effects/flutter/)
-- [Authentication and licensing](https://nosmai.com/docs/effects/authentication/)
-- [Beauty and makeup](https://nosmai.com/docs/effects/beauty-and-makeup/)
-- [Filters and effects](https://nosmai.com/docs/effects/filters-and-effects/)
-- [Cloud filters](https://nosmai.com/docs/effects/cloud-filters/)
-- [Flutter live streaming with Agora](https://nosmai.com/docs/effects/flutter-live-streaming-agora/)
-- [Errors and troubleshooting](https://nosmai.com/docs/effects/errors-and-troubleshooting/)
+- [Flutter platform guide](https://nosmai.com/docs/effects/platforms/flutter/)
+- [Flutter installation](https://nosmai.com/docs/effects/installation/flutter/)
+- [License key](https://nosmai.com/docs/effects/license-key/)
+- [Apply a beauty filter](https://nosmai.com/docs/effects/guides/effects/apply-a-beauty-filter/flutter/)
+- [Filters and effects](https://nosmai.com/docs/effects/concepts/filters-and-effects/)
+- [Cloud filters](https://nosmai.com/docs/effects/concepts/cloud-filters/)
+- [Flutter live streaming with Agora](https://nosmai.com/docs/effects/integrations/agora/flutter/)
+- [Troubleshooting](https://nosmai.com/docs/effects/troubleshooting/)
 
 A valid Nosmai license key is required. Create and manage projects through the
 [Nosmai Console](https://console.nosmai.com/).
