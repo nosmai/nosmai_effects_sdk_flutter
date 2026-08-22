@@ -1174,8 +1174,8 @@ class NosmaiFlutter {
 
   /// Apply teeth whitening filter.
   ///
-  /// [intensity] ranges 0.0 (off) to 1.0 (full). Uses MediaPipe inner-lip
-  /// landmarks. Pass 0.0 to remove the effect.
+  /// [intensity] ranges 0.0 (off) to 1.0 (full). Uses inner-lip landmarks.
+  /// Pass 0.0 to remove the effect.
   Future<void> applyTeethWhitening(double intensity) async {
     _checkInitialized();
     await NosmaiFlutterPlatform.instance.applyTeethWhitening(intensity);
