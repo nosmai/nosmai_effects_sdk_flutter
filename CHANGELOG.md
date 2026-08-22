@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2
+
+- Improved performance, stability, and reliability.
+
 ## 1.0.1
 
 - Updated compatibility to Android Effects SDK `3.0.3` and
