@@ -23,13 +23,15 @@ class UnifiedCameraScreen extends StatefulWidget {
 }
 
 class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, NosmaiCameraLifecycleMixin {
   // SDK instance
   final NosmaiFlutter _nosmai = NosmaiFlutter.instance;
 
   // Camera state
   bool _isRecording = false;
   bool _isFrontCamera = true;
+  bool _exitInProgress = false;
+  bool _allowRoutePop = false;
 
   // UI Controllers
   late AnimationController _recordButtonController;
@@ -71,15 +73,15 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
     'Teeth',
   ];
   static const List<String> _beautyCatIcons = [
-    '💋',
-    '🎨',
-    '🌸',
-    '👁️',
-    '✏️',
-    '✨',
-    '🎛️',
-    '🌈',
-    '🦷',
+    'L',
+    'ES',
+    'BL',
+    'EL',
+    'EB',
+    'S',
+    'A',
+    'C',
+    'T',
   ];
   // Variant labels — order matches the style enum ordinals (0,1,2).
   static const List<List<String>> _makeupVariants = [
@@ -108,8 +110,7 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
 
   Future<void> _resetAllFilters() async {
     try {
-      await _nosmai.removeAllMakeup();
-      await _nosmai.removeBuiltInFilters();
+      await _nosmai.removeAllBeautyEffects();
       await _nosmai.removeAllFilters();
       _resetBeautyState();
     } catch (e) {
@@ -183,7 +184,7 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
     try {
       // Check if SDK is still initialized
       if (!_nosmai.isInitialized) {
-        debugPrint('❌ SDK not initialized, cannot switch camera');
+        debugPrint('SDK not initialized, cannot switch camera');
         return;
       }
 
@@ -194,13 +195,13 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
           _isFrontCamera = !_isFrontCamera;
         });
         debugPrint(
-          '✅ Camera switched successfully to ${_isFrontCamera ? 'front' : 'back'}',
+          'Camera switched successfully to ${_isFrontCamera ? 'front' : 'back'}',
         );
       } else {
-        debugPrint('🔄 Camera switch throttled - ignored rapid tap');
+        debugPrint('Camera switch throttled - ignored rapid tap');
       }
     } catch (e) {
-      debugPrint('❌ Camera switch failed: $e');
+      debugPrint('Camera switch failed: $e');
 
       // Handle specific error types
       if (e is NosmaiError) {
@@ -209,6 +210,17 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
         _showErrorMessage('Camera switch failed: ${e.toString()}');
       }
     }
+  }
+
+  Future<void> _closeCameraScreen([Object? result]) async {
+    if (_exitInProgress) return;
+    _exitInProgress = true;
+
+    await cleanupBeforeNavigation();
+
+    if (!mounted) return;
+    setState(() => _allowRoutePop = true);
+    Navigator.of(context).pop(result);
   }
 
   /// Handle camera-specific errors with user-friendly messages
@@ -481,222 +493,226 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          const Positioned.fill(
-            child: RepaintBoundary(child: NosmaiCameraPreview()),
-          ),
+    return PopScope<Object?>(
+      canPop: _allowRoutePop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
+          _closeCameraScreen(result);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            const Positioned.fill(
+              child: RepaintBoundary(child: NosmaiCameraPreview()),
+            ),
 
-          // Top Controls
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withAlpha(179),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-              child: SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 16,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      // Back button
-                      _buildIconButton(
-                        icon: Icons.arrow_back_ios_rounded,
-                        onTap: () async {
-                          if (mounted) {
-                            Navigator.pop(context);
-                          }
-                        },
-                      ),
-
-                      const SizedBox.shrink(),
-
-                      // Right controls
-                      Row(
-                        children: [
-                          _buildIconButton(
-                            icon: NosmaiFlutter.isCameraSwitching
-                                ? Icons.hourglass_empty_rounded
-                                : Icons.flip_camera_ios_rounded,
-                            onTap: NosmaiFlutter.isCameraSwitching
-                                ? null
-                                : _switchCamera,
-                          ),
-                          const SizedBox(width: 12),
-                          _buildIconButton(
-                            icon: Icons.refresh_rounded,
-                            onTap: _resetAllFilters,
-                          ),
-                        ],
-                      ),
+            // Top Controls
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withAlpha(179),
+                      Colors.transparent,
                     ],
                   ),
                 ),
-              ),
-            ),
-          ),
-
-          // Bottom Controls
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Main Controls
-                Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.bottomCenter,
-                      end: Alignment.topCenter,
-                      colors: [
-                        Colors.black.withAlpha(230),
-                        Colors.black.withAlpha(153),
-                        Colors.transparent,
-                      ],
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 16,
                     ),
-                  ),
-                  child: SafeArea(
-                    child: Column(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // Action Buttons
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 16,
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              // Capture Photo
-                              _buildActionButton(
-                                icon: Icons.camera_alt_rounded,
-                                onTap: _capturePhoto,
-                                size: 24,
-                              ),
+                        // Back button
+                        _buildIconButton(
+                          icon: Icons.arrow_back_ios_rounded,
+                          onTap: _exitInProgress ? null : _closeCameraScreen,
+                        ),
 
-                              // Record Video
-                              GestureDetector(
-                                onTap: _toggleRecording,
-                                child: AnimatedBuilder(
-                                  animation: _recordButtonController,
-                                  builder: (context, child) {
-                                    return Container(
-                                      width: 60,
-                                      height: 60,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                          color: _isRecording
-                                              ? Colors.red
-                                              : Colors.white,
-                                          width: 3,
-                                        ),
-                                      ),
-                                      child: Center(
-                                        child: Container(
-                                          width: 46,
-                                          height: 46,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: _isRecording
-                                                ? Colors.red
-                                                : Colors.white.withAlpha(77),
-                                          ),
-                                          child: Icon(
-                                            _isRecording
-                                                ? Icons.stop
-                                                : Icons.videocam,
-                                            color: Colors.white,
-                                            size: 24,
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
+                        const SizedBox.shrink(),
 
-                              // Beauty (opens the Android-style beauty sheet)
-                              _buildActionButton(
-                                icon: Icons.face_retouching_natural,
-                                onTap: _openBeautySheet,
-                                size: 20,
-                              ),
-                            ],
-                          ),
+                        // Right controls
+                        Row(
+                          children: [
+                            _buildIconButton(
+                              icon: NosmaiFlutter.isCameraSwitching
+                                  ? Icons.hourglass_empty_rounded
+                                  : Icons.flip_camera_ios_rounded,
+                              onTap: NosmaiFlutter.isCameraSwitching
+                                  ? null
+                                  : _switchCamera,
+                            ),
+                            const SizedBox(width: 12),
+                            _buildIconButton(
+                              icon: Icons.refresh_rounded,
+                              onTap: _resetAllFilters,
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   ),
                 ),
-              ],
+              ),
             ),
-          ),
 
-          // Recording Indicator
-          if (_isRecording)
+            // Bottom Controls
             Positioned(
-              top: 0,
+              bottom: 0,
               left: 0,
               right: 0,
-              child: SafeArea(
-                child: Container(
-                  padding: const EdgeInsets.only(top: 16),
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Main Controls
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [
+                          Colors.black.withAlpha(230),
+                          Colors.black.withAlpha(153),
+                          Colors.transparent,
+                        ],
                       ),
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
+                    ),
+                    child: SafeArea(
+                      child: Column(
                         children: [
-                          Container(
-                            width: 6,
-                            height: 6,
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.white,
+                          // Action Buttons
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 16,
                             ),
-                          ),
-                          const SizedBox(width: 6),
-                          const Text(
-                            'Recording',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                              children: [
+                                // Capture Photo
+                                _buildActionButton(
+                                  icon: Icons.camera_alt_rounded,
+                                  onTap: _capturePhoto,
+                                  size: 24,
+                                ),
+
+                                // Record Video
+                                GestureDetector(
+                                  onTap: _toggleRecording,
+                                  child: AnimatedBuilder(
+                                    animation: _recordButtonController,
+                                    builder: (context, child) {
+                                      return Container(
+                                        width: 60,
+                                        height: 60,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                            color: _isRecording
+                                                ? Colors.red
+                                                : Colors.white,
+                                            width: 3,
+                                          ),
+                                        ),
+                                        child: Center(
+                                          child: Container(
+                                            width: 46,
+                                            height: 46,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: _isRecording
+                                                  ? Colors.red
+                                                  : Colors.white.withAlpha(77),
+                                            ),
+                                            child: Icon(
+                                              _isRecording
+                                                  ? Icons.stop
+                                                  : Icons.videocam,
+                                              color: Colors.white,
+                                              size: 24,
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+
+                                // Beauty (opens the Android-style beauty sheet)
+                                _buildActionButton(
+                                  icon: Icons.face_retouching_natural,
+                                  onTap: _openBeautySheet,
+                                  size: 20,
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
                     ),
                   ),
-                ),
+                ],
               ),
             ),
-        ],
+
+            // Recording Indicator
+            if (_isRecording)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: SafeArea(
+                  child: Container(
+                    padding: const EdgeInsets.only(top: 16),
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Text(
+                              'Recording',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -796,7 +812,7 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
               children: [
                 const Expanded(
                   child: Text(
-                    '💄  Beauty',
+                    'Beauty',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 20,
@@ -970,15 +986,15 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
       case 5: // Skin
         return Column(
           children: [
-            _beautySlider('✨  Smoothing', _bSmoothing, 0, 1, (v) {
+            _beautySlider('Smoothing', _bSmoothing, 0, 1, (v) {
               _bSmoothing = v;
               _nosmai.applySkinSmoothing(v);
             }, setSheet),
-            _beautySlider('🫧  Keep texture', _bKeepTexture, 0, 1, (v) {
+            _beautySlider('Keep texture', _bKeepTexture, 0, 1, (v) {
               _bKeepTexture = v;
               _nosmai.applySharpening(v);
             }, setSheet),
-            _beautySlider('🤍  Whitening', _bWhitening, 0, 1, (v) {
+            _beautySlider('Whitening', _bWhitening, 0, 1, (v) {
               _bWhitening = v;
               _nosmai.applySkinWhitening(v);
             }, setSheet),
@@ -987,44 +1003,43 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
       case 6: // Adjust
         return Column(
           children: [
-            _beautySlider('☀️  Brightness', _bBrightness, -1, 1, (v) {
+            _beautySlider('Brightness', _bBrightness, -1, 1, (v) {
               _bBrightness = v;
               _nosmai.applyBrightnessFilter(v);
             }, setSheet),
-            _beautySlider('🎛️  Contrast', _bContrast, 0, 2, (v) {
+            _beautySlider('Contrast', _bContrast, 0, 2, (v) {
               _bContrast = v;
               _nosmai.applyContrastFilter(v);
             }, setSheet),
-            // NOTE: Saturation intentionally omitted — the Flutter plugin's
-            // adjustHSB is an Android stub that drops saturation and only
-            // re-applies hue (which would reset the Hue slider). Needs a real
-            // applySaturation channel (like teeth) before it can go here.
+            // Saturation and combined HSB controls are demonstrated in
+            // beauty_filter_screen.dart. The public adjustHSB API supports
+            // hue, saturation, and brightness on both platforms.
           ],
         );
       case 7: // Color
         return Column(
           children: [
-            _beautySlider('🎨  Hue', _bHue, 0, 360, (v) {
+            _beautySlider('Hue', _bHue, 0, 360, (v) {
               _bHue = v;
               _nosmai.applyHue(v);
             }, setSheet),
-            _beautySlider('🌡️  WB Temp', _bWbTemp, 2000, 8000, (v) {
+            _beautySlider('WB Temp', _bWbTemp, 2000, 8000, (v) {
               _bWbTemp = v;
               _nosmai.applyWhiteBalance(temperature: v, tint: _bWbTint);
             }, setSheet),
-            _beautySlider('🎚️  WB Tint', _bWbTint, -100, 100, (v) {
+            _beautySlider('WB Tint', _bWbTint, -100, 100, (v) {
               _bWbTint = v;
               _nosmai.applyWhiteBalance(temperature: _bWbTemp, tint: v);
             }, setSheet),
-            _beautySlider('🔴  Red', _bRed, 0, 2, (v) {
+            _beautySlider('Red', _bRed, 0, 2, (v) {
               _bRed = v;
               _nosmai.applyRGBFilter(red: _bRed, green: _bGreen, blue: _bBlue);
             }, setSheet),
-            _beautySlider('🟢  Green', _bGreen, 0, 2, (v) {
+            _beautySlider('Green', _bGreen, 0, 2, (v) {
               _bGreen = v;
               _nosmai.applyRGBFilter(red: _bRed, green: _bGreen, blue: _bBlue);
             }, setSheet),
-            _beautySlider('🔵  Blue', _bBlue, 0, 2, (v) {
+            _beautySlider('Blue', _bBlue, 0, 2, (v) {
               _bBlue = v;
               _nosmai.applyRGBFilter(red: _bRed, green: _bGreen, blue: _bBlue);
             }, setSheet),
@@ -1034,7 +1049,7 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _beautySlider('🦷  Whitening', _bTeeth, 0, 1, (v) {
+            _beautySlider('Whitening', _bTeeth, 0, 1, (v) {
               _bTeeth = v;
               _nosmai.applyTeethWhitening(v);
             }, setSheet),
@@ -1178,9 +1193,7 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
   /// Clear EVERY built-in beauty effect (makeup layers + adjustments).
   Future<void> _clearAllBeauty() async {
     try {
-      await _nosmai.removeAllMakeup();
       await _nosmai.removeAllBeautyEffects();
-      await _nosmai.removeBuiltInFilters();
     } catch (e) {
       debugPrint('Clear beauty error: $e');
     }

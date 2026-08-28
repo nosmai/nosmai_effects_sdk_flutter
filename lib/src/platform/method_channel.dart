@@ -178,6 +178,7 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
         break;
       case 'onCameraProcessingStopped':
         // Camera processing stopped
+        NosmaiFlutter.dispatchNativeProcessingStopped();
         CameraStateNotifierImpl.instance.notifyCameraProcessingStopped();
         break;
       case 'onLicenseStatusChanged':
@@ -793,6 +794,12 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
   }
 
   @override
+  Future<bool> endCameraSession() async {
+    final result = await methodChannel.invokeMethod<bool>('endCameraSession');
+    return result ?? false;
+  }
+
+  @override
   Future<void> reinitializePreview() async {
     try {
       await methodChannel.invokeMethod('reinitializePreview');
@@ -860,6 +867,20 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
     } catch (e) {
       rethrow;
     }
+  }
+
+  @override
+  Future<void> applyContourHighlighter(double level) async {
+    await methodChannel.invokeMethod('applyContourHighlighter', {
+      'level': level,
+    });
+  }
+
+  @override
+  Future<void> applyDarkCircleCorrector(double level) async {
+    await methodChannel.invokeMethod('applyDarkCircleCorrector', {
+      'level': level,
+    });
   }
 
   @override
@@ -1469,6 +1490,21 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
     try {
       await methodChannel.invokeMethod('setNoseSlimLevel', {
         'level': level,
+      });
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> setReshape({
+    required NosmaiReshapeType type,
+    required double value,
+  }) async {
+    try {
+      await methodChannel.invokeMethod('setReshape', {
+        'type': type.value,
+        'value': value,
       });
     } catch (e) {
       rethrow;

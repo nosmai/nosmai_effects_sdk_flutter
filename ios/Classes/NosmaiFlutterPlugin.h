@@ -3,7 +3,7 @@
 
 @interface NosmaiFlutterPlugin : NSObject<FlutterPlugin>
 
-// ✅ NEW: External CVPixelBuffer processing with manual flip control
+// External CVPixelBuffer processing with manual flip control.
 // This method provides explicit control over horizontal flipping for correct mirror behavior
 //
 // @param pixelBuffer The CVPixelBuffer to process (modified in-place)

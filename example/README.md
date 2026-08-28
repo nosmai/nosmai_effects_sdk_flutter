@@ -8,7 +8,7 @@ intentionally ships without local `.nosmai` filter binaries.
 ## Requirements
 
 - Flutter compatible with the version declared by the package
-- Android API 21 or later on an ARM64 device
+- Android API 24 or later on an `arm64-v8a` or `armeabi-v7a` device
 - iOS 15 or later on a physical ARM64 device
 - A valid Nosmai license key for each platform
 - Camera and microphone permissions
@@ -17,17 +17,15 @@ The iOS simulator is not supported. Use a physical ARM64 iOS device.
 
 ## Native SDK Setup
 
-iOS resolves `NosmaiCameraSDK 3.0.3` automatically through CocoaPods.
+iOS resolves `NosmaiCameraSDK 3.0.5` automatically through CocoaPods. Android
+resolves `nosmai-sdk-3.0.5.aar` from the official
+[Nosmai Effects SDK for Android v3.0.5 release](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.5).
+No local `.framework` or `.aar` file is required by the example application.
 
-For Android, download `nosmai-sdk-3.0.3.aar` and `SHA256SUMS` from the
-[Nosmai Effects SDK for Android v3.0.3 release](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.3),
-verify the checksum, rename the AAR to `nosmai-release.aar`, and place it at:
-
-```text
-android/app/libs/nosmai-release.aar
-```
-
-The example intentionally does not include proprietary native binaries.
+The example's iOS `Podfile` also contains `permission_handler` macros for the
+camera, microphone, and photo-library permissions used by its UI. Those macros
+belong to the example dependency and are not additional Nosmai SDK APIs; do not
+copy unrelated permission entries into a consuming application.
 
 ## Run the Example
 
@@ -44,13 +42,41 @@ flutter run \
 
 Only the key for the active platform is used.
 
+## Camera Lifecycle
+
+Initialize the SDK once before opening a camera route. `NosmaiCameraPreview`
+creates the native preview and starts processing automatically; normal camera
+screens should not call `startProcessing()` themselves.
+
+Before leaving a camera route, await `endCameraSession()` (or use
+`NosmaiCameraLifecycleMixin.cleanupBeforeNavigation()`). Do not start global
+cleanup from `dispose()`, because a replacement preview may already be opening.
+
+```dart
+class CameraScreenState extends State<CameraScreen>
+    with NosmaiCameraLifecycleMixin {
+  Future<void> closeCamera() async {
+    await cleanupBeforeNavigation();
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const NosmaiCameraPreview();
+  }
+}
+```
+
+Built-in beauty intensities such as smoothing, whitening, sharpening, and
+makeup use the normalized `0.0...1.0` range.
+
 ## Production Builds
 
-The Android native SDK currently supports `arm64-v8a`. Build the Android
+The Android native SDK supports `arm64-v8a` and `armeabi-v7a`. Build the Android
 example for that target after completing the native SDK setup above:
 
 ```bash
-flutter build apk --release --target-platform android-arm64 \
+flutter build apk --release --target-platform android-arm,android-arm64 \
   --dart-define=NOSMAI_ANDROID_LICENSE_KEY=YOUR_ANDROID_KEY
 ```
 
@@ -76,6 +102,8 @@ flutter build ios --release \
   with this package or example.
 - External effects, filters, beauty effects, backgrounds, and games follow the
   native SDK compatibility rules.
+- Keep one active `NosmaiCameraPreview` at a time and await camera-session
+  teardown before opening another preview.
 - Use a physical device for camera, rendering, recording, and performance
   validation.
 

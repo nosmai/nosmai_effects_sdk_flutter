@@ -324,7 +324,7 @@ static __weak NosmaiCameraPreviewView* sActivePreviewView = nil;
     self->_nativeView.layer.contentsGravity = kCAGravityResizeAspectFill;
     self->_nativeView.layer.masksToBounds = YES;
 
-    // 🔧 FIX: Clear layer contents before forcing layout
+    // Clear layer contents before forcing layout.
     // This prevents old content from flashing when layoutIfNeeded triggers layoutSubviews
     self->_nativeView.layer.contents = nil;
 

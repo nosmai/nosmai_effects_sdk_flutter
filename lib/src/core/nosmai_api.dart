@@ -55,6 +55,9 @@ class NosmaiFlutter {
   /// List of active async operations to cancel on dispose
   final List<Future> _activeOperations = [];
 
+  /// One serialized camera-route teardown at a time.
+  Future<bool>? _cameraSessionEndOperation;
+
   /// Last pagination info from cloud filters request
   static NosmaiPaginationInfo? _lastPaginationInfo;
 
@@ -158,6 +161,14 @@ class NosmaiFlutter {
     inst._gameEventController?.add(event);
   }
 
+  /// Keep Dart lifecycle state aligned when the native preview owns teardown.
+  static void dispatchNativeProcessingStopped() {
+    final inst = NosmaiFlutter.instance;
+    if (inst._isDisposed) return;
+    inst._isProcessing = false;
+    inst._isRecording = false;
+  }
+
   /// Whether the SDK is initialized
   bool get isInitialized => _isInitialized;
 
@@ -187,6 +198,7 @@ class NosmaiFlutter {
       instance._isInitialized = false;
       instance._isProcessing = false;
       instance._isRecording = false;
+      instance._cameraSessionEndOperation = null;
       instance._activeOperations.clear();
     }
 
@@ -261,6 +273,11 @@ class NosmaiFlutter {
   /// Start video processing
   Future<void> startProcessing() async {
     _checkInitialized();
+
+    final endingSession = _cameraSessionEndOperation;
+    if (endingSession != null) {
+      await endingSession;
+    }
 
     if (_isProcessing) {
       return;
@@ -790,11 +807,11 @@ class NosmaiFlutter {
   /// final results = await nosmaiFlutter.validateLocalFilters();
   /// for (final result in results) {
   ///   if (!result.isValid) {
-  ///     print('❌ ${result.folderName}: ${result.errors}');
+  ///     print('ERROR ${result.folderName}: ${result.errors}');
   ///   } else if (result.warnings.isNotEmpty) {
-  ///     print('⚠️ ${result.folderName}: ${result.warnings}');
+  ///     print('WARNING ${result.folderName}: ${result.warnings}');
   ///   } else {
-  ///     print('✅ ${result.folderName}: OK');
+  ///     print('OK ${result.folderName}');
   ///   }
   /// }
   /// ```
@@ -961,10 +978,15 @@ class NosmaiFlutter {
   Future<void> cleanup() async {
     if (_isDisposed) return;
 
-    // ✅ DON'T set _isDisposed here - this is called during re-initialization
+    // Do not set _isDisposed here; this is called during re-initialization.
     // Only dispose() should set _isDisposed = true
 
     try {
+      final endingSession = _cameraSessionEndOperation;
+      if (endingSession != null) {
+        await endingSession.catchError((_) => false);
+      }
+
       if (_isRecording) {
         await stopRecording().catchError((e) {
           return NosmaiRecordingResult(
@@ -1109,6 +1131,31 @@ class NosmaiFlutter {
     await NosmaiFlutterPlatform.instance.detachCameraView();
   }
 
+  /// Safely end one camera screen without deinitializing the SDK.
+  ///
+  /// Await this before removing [NosmaiCameraPreview] from the widget tree. The
+  /// native visual graph is retired while its old render target is still valid,
+  /// so the next camera screen starts with a fresh preview-bound pipeline.
+  Future<bool> endCameraSession() {
+    _checkInitialized();
+
+    final activeOperation = _cameraSessionEndOperation;
+    if (activeOperation != null) return activeOperation;
+
+    late final Future<bool> operation;
+    operation = NosmaiFlutterPlatform.instance.endCameraSession().then((value) {
+      _isProcessing = false;
+      _isRecording = false;
+      return value;
+    }).whenComplete(() {
+      if (identical(_cameraSessionEndOperation, operation)) {
+        _cameraSessionEndOperation = null;
+      }
+    });
+    _cameraSessionEndOperation = operation;
+    return operation;
+  }
+
   /// Reinitialize the preview (useful for navigation recovery)
   Future<void> reinitializePreview() async {
     _checkInitialized();
@@ -1132,16 +1179,36 @@ class NosmaiFlutter {
   }
 
   // Built-in Filter Methods
-  /// Apply brightness filter
+  // All beauty/effect strengths use 0.0 (off) to 1.0 (maximum) on Flutter,
+  // Android and iOS. Values are clamped; 0..10/0..100 are not auto-detected.
+  /// Apply skin smoothing. [level] is 0.0 (off) to 1.0 (maximum).
   Future<void> applySkinSmoothing(double level) async {
     _checkInitialized();
-    await NosmaiFlutterPlatform.instance.applySkinSmoothing(level);
+    await NosmaiFlutterPlatform.instance
+        .applySkinSmoothing(level.clamp(0.0, 1.0).toDouble());
   }
 
-  /// Apply skin whitening filter
+  /// Apply skin whitening. [level] is 0.0 (off) to 1.0 (maximum).
   Future<void> applySkinWhitening(double level) async {
     _checkInitialized();
-    await NosmaiFlutterPlatform.instance.applySkinWhitening(level);
+    await NosmaiFlutterPlatform.instance
+        .applySkinWhitening(level.clamp(0.0, 1.0).toDouble());
+  }
+
+  /// Apply adaptive tonal contour and highlights while preserving skin detail.
+  /// [level] is 0.0 (off) to 1.0 (maximum).
+  Future<void> applyContourHighlighter(double level) async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance
+        .applyContourHighlighter(level.clamp(0.0, 1.0).toDouble());
+  }
+
+  /// Correct under-eye darkness while preserving natural skin texture.
+  /// [level] is 0.0 (off) to 1.0 (maximum).
+  Future<void> applyDarkCircleCorrector(double level) async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance
+        .applyDarkCircleCorrector(level.clamp(0.0, 1.0).toDouble());
   }
 
   /// Apply brightness filter
@@ -1166,10 +1233,11 @@ class NosmaiFlutter {
         .applyRGBFilter(red: red, green: green, blue: blue);
   }
 
-  /// Apply sharpening filter
+  /// Apply sharpening. [level] is 0.0 (off) to 1.0 (maximum).
   Future<void> applySharpening(double level) async {
     _checkInitialized();
-    await NosmaiFlutterPlatform.instance.applySharpening(level);
+    await NosmaiFlutterPlatform.instance
+        .applySharpening(level.clamp(0.0, 1.0).toDouble());
   }
 
   /// Apply teeth whitening filter.
@@ -1178,7 +1246,8 @@ class NosmaiFlutter {
   /// Pass 0.0 to remove the effect.
   Future<void> applyTeethWhitening(double intensity) async {
     _checkInitialized();
-    await NosmaiFlutterPlatform.instance.applyTeethWhitening(intensity);
+    await NosmaiFlutterPlatform.instance
+        .applyTeethWhitening(intensity.clamp(0.0, 1.0).toDouble());
   }
 
   /// Apply grayscale filter
@@ -1215,6 +1284,14 @@ class NosmaiFlutter {
   Future<void> removeBuiltInFilters() async {
     _checkInitialized();
     await NosmaiFlutterPlatform.instance.removeBuiltInFilters();
+  }
+
+  /// Remove one named built-in filter without disturbing the other beauty
+  /// controls. This is primarily useful for toggle-style controls such as
+  /// grayscale.
+  Future<void> removeBuiltInFilterByName(String filterName) async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance.removeBuiltInFilterByName(filterName);
   }
 
   /// Check if beauty filters are enabled
@@ -1894,6 +1971,58 @@ class NosmaiFlutter {
     }
   }
 
+  /// Set any supported face reshape using the cross-platform signed contract.
+  ///
+  /// [value] is clamped to `-1.0...1.0`; `0.0` is neutral and negative values
+  /// apply the opposite direction. The same type ids and values are used on
+  /// Android, iOS, Flutter, and React Native.
+  Future<void> setReshape({
+    required NosmaiReshapeType type,
+    required double value,
+  }) async {
+    _checkInitialized();
+    try {
+      await NosmaiFlutterPlatform.instance.setReshape(
+        type: type,
+        value: value.clamp(-1.0, 1.0).toDouble(),
+      );
+    } on PlatformException catch (e) {
+      throw NosmaiError.general(
+        type: _parseErrorType(e.code),
+        message: e.message ?? 'Failed to set face reshape',
+        details: e.details?.toString(),
+      );
+    }
+  }
+
+  /// Adjust lip size (`-1.0...1.0`, `0.0` is neutral).
+  Future<void> setLipSizeLevel(double level) =>
+      setReshape(type: NosmaiReshapeType.lip, value: level);
+
+  /// Adjust chin size (`-1.0...1.0`, `0.0` is neutral).
+  Future<void> setChinSizeLevel(double level) =>
+      setReshape(type: NosmaiReshapeType.chin, value: level);
+
+  /// Move eyebrows down/up (`-1.0...1.0`, `0.0` is neutral).
+  Future<void> setEyebrowPositionLevel(double level) =>
+      setReshape(type: NosmaiReshapeType.brow, value: level);
+
+  /// Adjust eyebrow thickness (`-1.0...1.0`, `0.0` is neutral).
+  Future<void> setEyebrowThicknessLevel(double level) =>
+      setReshape(type: NosmaiReshapeType.browThickness, value: level);
+
+  /// Adjust jawline shape (`-1.0...1.0`, `0.0` is neutral).
+  Future<void> setJawlineLevel(double level) =>
+      setReshape(type: NosmaiReshapeType.jaw, value: level);
+
+  /// Adjust mouth width (`-1.0...1.0`, `0.0` is neutral).
+  Future<void> setMouthWidthLevel(double level) =>
+      setReshape(type: NosmaiReshapeType.mouthWidth, value: level);
+
+  /// Adjust forehead size (`-1.0...1.0`, `0.0` is neutral).
+  Future<void> setForeheadSizeLevel(double level) =>
+      setReshape(type: NosmaiReshapeType.forehead, value: level);
+
   /// Remove all face morphing effects
   ///
   /// Resets face slim, eye size, nose slim, and all morphing to default.
@@ -2241,6 +2370,15 @@ class NosmaiFlutter {
   /// Internal async cleanup
   Future<void> _performAsyncCleanup() async {
     final platform = NosmaiFlutterPlatform.instance;
+
+    final endingSession = _cameraSessionEndOperation;
+    if (endingSession != null) {
+      try {
+        await endingSession.timeout(const Duration(seconds: 6));
+      } catch (_) {
+        // Continue permanent cleanup if route teardown did not complete.
+      }
+    }
 
     if (_isRecording) {
       try {

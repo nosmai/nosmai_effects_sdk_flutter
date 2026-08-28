@@ -224,6 +224,28 @@ enum NosmaiLicenseStatus { valid, expired, invalid }
 /// Background segmentation mode enumeration
 enum NosmaiBackgroundSegmentationMode { color, image, video }
 
+/// Mesh-warp face reshape controls shared by Android and iOS.
+///
+/// Values passed to `setReshape` use the signed `-1.0...1.0` contract,
+/// where `0.0` is neutral and a negative value applies the opposite direction.
+/// These integer ids are part of the native cross-platform ABI and must not be
+/// reordered.
+enum NosmaiReshapeType {
+  lip(0),
+  faceSlim(1),
+  eye(2),
+  nose(3),
+  chin(4),
+  brow(5),
+  browThickness(6),
+  jaw(7),
+  mouthWidth(8),
+  forehead(9);
+
+  final int value;
+  const NosmaiReshapeType(this.value);
+}
+
 /// Lipstick style enumeration
 ///
 /// Different lipstick texture/finish styles available in the SDK.

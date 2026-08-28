@@ -59,18 +59,16 @@ android {
     }
 
     defaultConfig {
-        minSdk = 21
+        minSdk = 24
         consumerProguardFiles 'consumer-rules.pro'
         ndk {
-            abiFilters "arm64-v8a"
+            abiFilters "arm64-v8a", "armeabi-v7a"
         }
     }
 
     dependencies {
-        // The consuming application supplies the proprietary native SDK.
-        // compileOnly keeps the AAR out of the pub.dev package and prevents
-        // duplicate native classes when the app adds it at runtime.
-        compileOnly(name: 'nosmai-release', ext: 'aar')
+        // Resolve the verified production SDK from the official GitHub release.
+        implementation("com.nosmai:nosmai-sdk:3.0.5@aar")
 
         // Test dependencies
         testImplementation("org.jetbrains.kotlin:kotlin-test")
@@ -90,8 +88,23 @@ android {
     }
 }
 
-repositories {
-    flatDir {
-        dirs "${rootProject.projectDir}/app/libs"
+// Gradle resolves transitive Android dependencies using the consuming app's
+// repositories. Register the official release repository for every project so
+// applications do not need to keep or wire a local AAR.
+rootProject.allprojects {
+    repositories {
+        ivy {
+            name = "nosmaiEffectsSdk"
+            url = uri("https://github.com/nosmai/nosmai_effects_sdk_android/releases/download")
+            patternLayout {
+                artifact("v[revision]/[artifact]-[revision].[ext]")
+            }
+            metadataSources {
+                artifact()
+            }
+            content {
+                includeModule("com.nosmai", "nosmai-sdk")
+            }
+        }
     }
 }

@@ -35,6 +35,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Keep
 public class Camera2Helper {
@@ -63,6 +64,13 @@ public class Camera2Helper {
     private Handler mBackgroundHandler;
     private Semaphore mCameraOpenCloseLock = new Semaphore(1);
     private final Semaphore mCameraClosedLock = new Semaphore(0);
+    private final Object mStateLock = new Object();
+    private final AtomicLong mOpenGeneration = new AtomicLong(0L);
+    private final AtomicLong mCaptureSessionGeneration = new AtomicLong(0L);
+    private volatile long mActiveDeviceGeneration = 0L;
+    private volatile long mOpeningGeneration = 0L;
+    private volatile Surface mPendingSessionTarget;
+    private volatile CameraDevice mExpectedClosingDevice;
     private int mSensorOrientation;
     private int mTargetWidth = 1280;
     private int mTargetHeight = 720;
@@ -70,14 +78,14 @@ public class Camera2Helper {
     private PreviewSizeCallback mPreviewSizeCallback;
     private CameraErrorCallback mCameraErrorCallback;
     private CameraReadyCallback mCameraReadyCallback;
-    private CameraCharacteristics mCameraCharacteristics; // 📊 Store camera characteristics
+    private CameraCharacteristics mCameraCharacteristics; // Store camera characteristics.
     private InputMode mInputMode = InputMode.YUV;
 
     private volatile boolean mIsCameraOpened = false;
     private volatile boolean mOpeningCamera = false;
     private volatile boolean mClosingCamera = false;
 
-    // 🚀 SMART BUFFER REUSE: Simple reusable buffer for current session
+    // Reusable buffer for the current session.
     private byte[] mReuseBuffer = null;
     private int mLastBufferSize = 0;
 
@@ -167,7 +175,7 @@ public class Camera2Helper {
         try {
             closeCamera();
             stopBackgroundThread();
-            NosmaiLog.d(TAG, "✅ Camera stopped successfully");
+            NosmaiLog.d(TAG, "Camera stopped successfully");
         } catch (Exception e) {
             NosmaiLog.e(TAG, "Error during camera stop: " + e.getMessage());
         }
@@ -212,6 +220,7 @@ public class Camera2Helper {
 
         CameraManager manager = (CameraManager) mContext.getSystemService(Context.CAMERA_SERVICE);
         boolean lockAcquired = false;
+        long openGeneration = 0L;
         try {
             String cameraId = getCameraId(manager);
             if (cameraId == null) {
@@ -248,7 +257,7 @@ public class Camera2Helper {
             // fps drop. Capping to 1280x720 matches both cameras (~0.9M px) and lifts
             // back-camera fps with no visible quality loss on a phone preview.
             mPreviewSize = chooseOptimalSize(outputSizes, mTargetWidth, mTargetHeight);
-            NosmaiLog.i(TAG, "📐 Selected preview size: " + mPreviewSize.getWidth()
+            NosmaiLog.i(TAG, "Selected preview size: " + mPreviewSize.getWidth()
                     + "x" + mPreviewSize.getHeight()
                     + ", sensorOrientation=" + mSensorOrientation
                     + ", inputMode=" + mInputMode);
@@ -275,10 +284,19 @@ public class Camera2Helper {
                 throw new RuntimeException("Time out waiting to lock camera opening.");
             }
             lockAcquired = true;
-            mClosingCamera = false;
-            mOpeningCamera = true;
+            openGeneration = mOpenGeneration.incrementAndGet();
+            mCaptureSessionGeneration.incrementAndGet();
+            synchronized (mStateLock) {
+                mClosingCamera = false;
+                mOpeningCamera = true;
+                mOpeningGeneration = openGeneration;
+                mPendingSessionTarget = null;
+            }
 
-            manager.openCamera(cameraId, mStateCallback, mBackgroundHandler);
+            manager.openCamera(
+                    cameraId,
+                    createStateCallback(openGeneration),
+                    mBackgroundHandler);
             return true;
         } catch (CameraAccessException e) {
             NosmaiLog.e(TAG, "Failed to access camera", e);
@@ -290,8 +308,7 @@ public class Camera2Helper {
         }
 
         if (lockAcquired) {
-            mOpeningCamera = false;
-            mCameraOpenCloseLock.release();
+            releaseOpeningLockIfNeeded(openGeneration);
         }
         return false;
     }
@@ -340,141 +357,330 @@ public class Camera2Helper {
     }
 
 
-    private final CameraDevice.StateCallback mStateCallback = new CameraDevice.StateCallback() {
-        @Override
-        public void onOpened(@NonNull CameraDevice cameraDevice) {
-            releaseOpeningLockIfNeeded();
-            if (mClosingCamera) {
-                NosmaiLog.w(TAG, "Camera opened after close was requested; closing immediately");
-                mCameraClosedLock.drainPermits();
-                cameraDevice.close();
-                mIsCameraOpened = false;
-                return;
+    private CameraDevice.StateCallback createStateCallback(
+            final long openGeneration) {
+        return new CameraDevice.StateCallback() {
+            @Override
+            public void onOpened(@NonNull CameraDevice cameraDevice) {
+                releaseOpeningLockIfNeeded(openGeneration);
+
+                synchronized (mStateLock) {
+                    if (openGeneration != mOpenGeneration.get()
+                            || mClosingCamera) {
+                        NosmaiLog.w(
+                                TAG,
+                                "Ignoring camera open callback from a retired session");
+                        cameraDevice.close();
+                        return;
+                    }
+                    mCameraDevice = cameraDevice;
+                    mActiveDeviceGeneration = openGeneration;
+                    mIsCameraOpened = false;
+                }
+                createCaptureSession();
             }
-            mCameraDevice = cameraDevice;
-            createCaptureSession();
-        }
 
-        @Override
-        public void onDisconnected(@NonNull CameraDevice cameraDevice) {
-            NosmaiLog.w(TAG, "Camera device disconnected - cleaning up resources");
-            releaseOpeningLockIfNeeded();
-            cameraDevice.close();
-            mCameraDevice = null;
-            closeCaptureSessionQuietly();
-            mIsCameraOpened = false;
-            notifyCameraError("Camera device disconnected");
-        }
+            @Override
+            public void onDisconnected(@NonNull CameraDevice cameraDevice) {
+                releaseOpeningLockIfNeeded(openGeneration);
+                boolean ownsCurrentDevice;
+                long retiredGeneration = 0L;
+                CameraCaptureSession ownedSession = null;
+                synchronized (mStateLock) {
+                    ownsCurrentDevice = openGeneration == mOpenGeneration.get()
+                            && ((mActiveDeviceGeneration == openGeneration
+                                    && mCameraDevice == cameraDevice)
+                                || (mActiveDeviceGeneration == 0L
+                                    && mCameraDevice == null));
+                    if (ownsCurrentDevice) {
+                        retiredGeneration = mOpenGeneration.incrementAndGet();
+                        mCaptureSessionGeneration.incrementAndGet();
+                        ownedSession = mCaptureSession;
+                        mCaptureSession = null;
+                        mCameraDevice = null;
+                        mActiveDeviceGeneration = 0L;
+                        mPendingSessionTarget = null;
+                        mPreviewRequestBuilder = null;
+                        mIsCameraOpened = false;
+                    }
+                }
+                cameraDevice.close();
+                if (!ownsCurrentDevice) {
+                    return;
+                }
+                NosmaiLog.w(TAG, "Camera device disconnected - cleaning up resources");
+                // Close only the session detached under this callback's
+                // generation. A newer open may complete after the state lock
+                // is released and must not be closed by this retired callback.
+                closeSessionInstance(ownedSession);
+                notifyCameraErrorIfGeneration(
+                        retiredGeneration,
+                        "Camera device disconnected");
+            }
 
-        @Override
-        public void onError(@NonNull CameraDevice cameraDevice, int error) {
-            NosmaiLog.e(TAG, "Camera device error: " + error + " - cleaning up resources");
-            releaseOpeningLockIfNeeded();
-            cameraDevice.close();
-            mCameraDevice = null;
-            closeCaptureSessionQuietly();
-            mIsCameraOpened = false;
-            notifyCameraError("Camera device error: " + error);
-        }
+            @Override
+            public void onError(@NonNull CameraDevice cameraDevice, int error) {
+                releaseOpeningLockIfNeeded(openGeneration);
+                boolean ownsCurrentDevice;
+                long retiredGeneration = 0L;
+                CameraCaptureSession ownedSession = null;
+                synchronized (mStateLock) {
+                    ownsCurrentDevice = openGeneration == mOpenGeneration.get()
+                            && ((mActiveDeviceGeneration == openGeneration
+                                    && mCameraDevice == cameraDevice)
+                                || (mActiveDeviceGeneration == 0L
+                                    && mCameraDevice == null));
+                    if (ownsCurrentDevice) {
+                        retiredGeneration = mOpenGeneration.incrementAndGet();
+                        mCaptureSessionGeneration.incrementAndGet();
+                        ownedSession = mCaptureSession;
+                        mCaptureSession = null;
+                        mCameraDevice = null;
+                        mActiveDeviceGeneration = 0L;
+                        mPendingSessionTarget = null;
+                        mPreviewRequestBuilder = null;
+                        mIsCameraOpened = false;
+                    }
+                }
+                cameraDevice.close();
+                if (!ownsCurrentDevice) {
+                    return;
+                }
+                NosmaiLog.e(TAG, "Camera device error: " + error + " - cleaning up resources");
+                // Do not use the global close helper here: a newer camera can
+                // finish opening after this callback retires its generation.
+                closeSessionInstance(ownedSession);
+                notifyCameraErrorIfGeneration(
+                        retiredGeneration,
+                        "Camera device error: " + error);
+            }
 
-        @Override
-        public void onClosed(@NonNull CameraDevice cameraDevice) {
-            mClosingCamera = false;
-            mCameraClosedLock.release();
-        }
-    };
+            @Override
+            public void onClosed(@NonNull CameraDevice cameraDevice) {
+                boolean expectedClose = false;
+                synchronized (mStateLock) {
+                    if (mExpectedClosingDevice == cameraDevice) {
+                        mExpectedClosingDevice = null;
+                        mClosingCamera = false;
+                        expectedClose = true;
+                    }
+                    if (mCameraDevice == cameraDevice
+                            && mActiveDeviceGeneration == openGeneration) {
+                        mCameraDevice = null;
+                        mActiveDeviceGeneration = 0L;
+                        mIsCameraOpened = false;
+                    }
+                }
+                if (expectedClose) {
+                    mCameraClosedLock.release();
+                }
+            }
+        };
+    }
 
-    private void releaseOpeningLockIfNeeded() {
-        if (mOpeningCamera) {
-            mOpeningCamera = false;
+    private void releaseOpeningLockIfNeeded(long openGeneration) {
+        boolean releaseLock = false;
+        synchronized (mStateLock) {
+            if (mOpeningCamera && mOpeningGeneration == openGeneration) {
+                mOpeningCamera = false;
+                mOpeningGeneration = 0L;
+                releaseLock = true;
+            }
+        }
+        if (releaseLock) {
             mCameraOpenCloseLock.release();
         }
     }
 
     private void createCaptureSession() {
-        try {
-            if (mCameraDevice == null) return;
-
-            // Build exactly the target set for the selected input mode.
-            java.util.ArrayList<Surface> targets = new java.util.ArrayList<>();
-            mPreviewRequestBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-
-            if (mInputMode == InputMode.OES) {
-                if (!ensureOesPreviewSurface()) {
-                    NosmaiLog.e(TAG, "Cannot create OES capture session without preview surface");
-                    return;
-                }
-                targets.add(mPreviewSurface);
-                mPreviewRequestBuilder.addTarget(mPreviewSurface);
-            } else {
-                if (mImageReader == null) return;
-                Surface yuvSurface = mImageReader.getSurface();
-                targets.add(yuvSurface);
-                mPreviewRequestBuilder.addTarget(yuvSurface);
+        final CameraDevice cameraDevice;
+        final long openGeneration;
+        synchronized (mStateLock) {
+            cameraDevice = mCameraDevice;
+            openGeneration = mActiveDeviceGeneration;
+            if (cameraDevice == null
+                    || openGeneration == 0L
+                    || openGeneration != mOpenGeneration.get()
+                    || mClosingCamera) {
+                return;
             }
+        }
 
-            mCameraDevice.createCaptureSession(
-                    targets, new CameraCaptureSession.StateCallback() {
+        final Surface sessionTarget;
+        if (mInputMode == InputMode.OES) {
+            if (!ensureOesPreviewSurface()) {
+                NosmaiLog.e(TAG, "Cannot create OES capture session without preview surface");
+                return;
+            }
+            sessionTarget = mPreviewSurface;
+        } else {
+            ImageReader imageReader = mImageReader;
+            if (imageReader == null) return;
+            sessionTarget = imageReader.getSurface();
+        }
+        if (sessionTarget == null) return;
+
+        final long sessionGeneration = mCaptureSessionGeneration.incrementAndGet();
+        synchronized (mStateLock) {
+            if (cameraDevice != mCameraDevice
+                    || openGeneration != mOpenGeneration.get()
+                    || mClosingCamera) {
+                return;
+            }
+            mPendingSessionTarget = sessionTarget;
+        }
+
+        try {
+            final CaptureRequest.Builder requestBuilder =
+                    cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+            requestBuilder.addTarget(sessionTarget);
+
+            cameraDevice.createCaptureSession(
+                    Collections.singletonList(sessionTarget),
+                    new CameraCaptureSession.StateCallback() {
                         @Override
                         public void onConfigured(
                                 @NonNull CameraCaptureSession cameraCaptureSession) {
-                            if (mCameraDevice == null || mClosingCamera) {
-                                cameraCaptureSession.close();
-                                return;
+                            CameraCaptureSession previousSession = null;
+                            synchronized (mStateLock) {
+                                if (!isCaptureSessionRequestCurrentLocked(
+                                        cameraDevice,
+                                        openGeneration,
+                                        sessionGeneration,
+                                        sessionTarget)) {
+                                    closeSessionInstance(cameraCaptureSession);
+                                    return;
+                                }
+
+                                previousSession = mCaptureSession;
+                                mCaptureSession = cameraCaptureSession;
+                                mPreviewRequestBuilder = requestBuilder;
+                                mIsCameraOpened = false;
+                            }
+                            if (previousSession != null
+                                    && previousSession != cameraCaptureSession) {
+                                closeSessionInstance(previousSession);
                             }
 
-                            closeCaptureSessionQuietly();
-                            mCaptureSession = cameraCaptureSession;
                             try {
-                                // 🚀 SMART FPS: Get best supported FPS range for optimal performance
+                                // Select the best supported FPS range.
                                 Range<Integer> fpsRange = getBestFpsRange();
-                                NosmaiLog.i(TAG, "📊 Using FPS range: " + fpsRange);
-                                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange);
+                                NosmaiLog.i(TAG, "Using FPS range: " + fpsRange);
+                                requestBuilder.set(
+                                        CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                                        fpsRange);
 
                                 // Set auto-exposure and auto-focus for stability
-                                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
+                                requestBuilder.set(
+                                        CaptureRequest.CONTROL_AE_MODE,
+                                        CaptureRequest.CONTROL_AE_MODE_ON);
                                 int activeFlashMode = mTorchMode == CaptureRequest.FLASH_MODE_TORCH
                                         ? CaptureRequest.FLASH_MODE_TORCH
                                         : (mFlashEnabled && !isFrontCamera()
                                                 ? CaptureRequest.FLASH_MODE_TORCH
                                                 : mFlashMode);
-                                mPreviewRequestBuilder.set(CaptureRequest.FLASH_MODE, activeFlashMode);
-                                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+                                requestBuilder.set(
+                                        CaptureRequest.FLASH_MODE,
+                                        activeFlashMode);
+                                requestBuilder.set(
+                                        CaptureRequest.CONTROL_AF_MODE,
+                                        CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
 
-                                CaptureRequest request = mPreviewRequestBuilder.build();
-                                mCaptureSession.setRepeatingRequest(
-                                        request, null, mBackgroundHandler);
-                                mIsCameraOpened = true;
-                                notifyCameraReady();
+                                cameraCaptureSession.setRepeatingRequest(
+                                        requestBuilder.build(),
+                                        null,
+                                        mBackgroundHandler);
+
+                                boolean becameReady = false;
+                                synchronized (mStateLock) {
+                                    if (isCaptureSessionRequestCurrentLocked(
+                                            cameraDevice,
+                                            openGeneration,
+                                            sessionGeneration,
+                                            sessionTarget)
+                                            && mCaptureSession == cameraCaptureSession) {
+                                        mIsCameraOpened = true;
+                                        becameReady = true;
+                                        // Publish readiness while ownership is
+                                        // still atomic with this generation.
+                                        notifyCameraReady();
+                                    }
+                                }
+                                if (!becameReady) {
+                                    detachSessionIfOwned(cameraCaptureSession);
+                                    closeSessionInstance(cameraCaptureSession);
+                                    return;
+                                }
                             } catch (CameraAccessException | IllegalStateException e) {
                                 NosmaiLog.e(TAG, "Failed to set up capture request", e);
-                                closeCameraAfterFailure(cameraCaptureSession);
-                                notifyCameraError("Failed to start camera preview");
+                                long retiredGeneration = closeCameraAfterFailure(
+                                        cameraDevice,
+                                        openGeneration,
+                                        sessionGeneration,
+                                        sessionTarget,
+                                        cameraCaptureSession);
+                                if (retiredGeneration != 0L) {
+                                    notifyCameraErrorIfGeneration(
+                                            retiredGeneration,
+                                            "Failed to start camera preview");
+                                }
                             }
                         }
 
                         @Override
                         public void onConfigureFailed(
                                 @NonNull CameraCaptureSession cameraCaptureSession) {
-                            NosmaiLog.e(TAG, "Failed to configure capture session");
-                            closeCameraAfterFailure(cameraCaptureSession);
-                            notifyCameraError("Failed to configure capture session");
+                            long retiredGeneration = closeCameraAfterFailure(
+                                    cameraDevice,
+                                    openGeneration,
+                                    sessionGeneration,
+                                    sessionTarget,
+                                    cameraCaptureSession);
+                            if (retiredGeneration != 0L) {
+                                NosmaiLog.e(TAG, "Failed to configure capture session");
+                                notifyCameraErrorIfGeneration(
+                                        retiredGeneration,
+                                        "Failed to configure capture session");
+                            }
                         }
                     }, mBackgroundHandler);
-        } catch (CameraAccessException e) {
+        } catch (CameraAccessException | IllegalStateException e) {
             NosmaiLog.e(TAG, "Failed to create capture session", e);
-            closeCameraAfterFailure(null);
-            notifyCameraError("Failed to create capture session");
+            long retiredGeneration = closeCameraAfterFailure(
+                    cameraDevice,
+                    openGeneration,
+                    sessionGeneration,
+                    sessionTarget,
+                    null);
+            if (retiredGeneration != 0L) {
+                notifyCameraErrorIfGeneration(
+                        retiredGeneration,
+                        "Failed to create capture session");
+            }
         }
     }
 
     private void closeCamera() {
         boolean lockAcquired = false;
         boolean waitForDeviceClosed = false;
-        mClosingCamera = true;
+        CameraCaptureSession captureSessionToClose = null;
+        CameraDevice cameraDeviceToClose = null;
+        synchronized (mStateLock) {
+            mClosingCamera = true;
+            mOpenGeneration.incrementAndGet();
+            mCaptureSessionGeneration.incrementAndGet();
+            mPendingSessionTarget = null;
+            mIsCameraOpened = false;
+        }
         try {
             if (!mCameraOpenCloseLock.tryAcquire(CAMERA_OPEN_CLOSE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
                 NosmaiLog.w(TAG, "Timed out waiting to lock camera closing; skipping blocking close");
+                long openingGeneration = mOpeningGeneration;
+                if (openingGeneration != 0L) {
+                    // The background handler is about to stop, so a retired
+                    // open callback may never arrive to release its permit.
+                    releaseOpeningLockIfNeeded(openingGeneration);
+                }
                 if (mImageReader != null) {
                     mImageReader.close();
                     mImageReader = null;
@@ -487,21 +693,32 @@ public class Camera2Helper {
             }
             lockAcquired = true;
 
-            if (mCaptureSession != null) {
+            synchronized (mStateLock) {
+                captureSessionToClose = mCaptureSession;
+                mCaptureSession = null;
+                mPreviewRequestBuilder = null;
+
+                cameraDeviceToClose = mCameraDevice;
+                mCameraDevice = null;
+                mActiveDeviceGeneration = 0L;
+                if (cameraDeviceToClose != null) {
+                    mExpectedClosingDevice = cameraDeviceToClose;
+                }
+            }
+
+            if (captureSessionToClose != null) {
                 try {
-                    mCaptureSession.stopRepeating();
-                    mCaptureSession.abortCaptures();
+                    captureSessionToClose.stopRepeating();
+                    captureSessionToClose.abortCaptures();
                 } catch (CameraAccessException | IllegalStateException e) {
                     NosmaiLog.d(TAG, "Capture session already stopping: " + e.getMessage());
                 }
-                mCaptureSession.close();
-                mCaptureSession = null;
+                closeSessionInstance(captureSessionToClose);
             }
 
-            if (mCameraDevice != null) {
+            if (cameraDeviceToClose != null) {
                 mCameraClosedLock.drainPermits();
-                mCameraDevice.close();
-                mCameraDevice = null;
+                cameraDeviceToClose.close();
                 waitForDeviceClosed = true;
             }
 
@@ -513,7 +730,7 @@ public class Camera2Helper {
 
             mIsCameraOpened = false;
 
-            // 🚀 CLEANUP: Clear reuse buffer
+            // Clear the reusable buffer.
             mReuseBuffer = null;
             mLastBufferSize = 0;
 
@@ -523,6 +740,10 @@ public class Camera2Helper {
         } finally {
             if (lockAcquired) {
                 mCameraOpenCloseLock.release();
+            } else {
+                synchronized (mStateLock) {
+                    mClosingCamera = false;
+                }
             }
         }
 
@@ -536,22 +757,38 @@ public class Camera2Helper {
                 Thread.currentThread().interrupt();
             }
         }
-        mClosingCamera = false;
+        synchronized (mStateLock) {
+            mClosingCamera = false;
+        }
     }
 
     /**
      * Optionally set a GL OES preview Surface (from SurfaceTexture). Call before startCamera().
      */
     public void setPreviewSurface(@Nullable android.view.Surface surface) {
+        if (mPreviewSurface == surface && !mOwnsPreviewSurface) {
+            return;
+        }
+        boolean recreateSession = hasCurrentCameraDevice();
+        if (recreateSession) {
+            closeCaptureSessionQuietly();
+        }
         releaseOwnedPreviewSurface();
         this.mPreviewSurface = surface;
         this.mOwnsPreviewSurface = false;
         this.mPreviewSurfaceTexture = null;
+        if (recreateSession) {
+            createCaptureSession();
+        }
     }
 
     public void setOesPreviewSurfaceTexture(@Nullable SurfaceTexture surfaceTexture) {
         if (mPreviewSurfaceTexture == surfaceTexture && mPreviewSurface != null) {
             return;
+        }
+        boolean recreateSession = hasCurrentCameraDevice();
+        if (recreateSession) {
+            closeCaptureSessionQuietly();
         }
         releaseOwnedPreviewSurface();
         mPreviewSurfaceTexture = surfaceTexture;
@@ -563,26 +800,27 @@ public class Camera2Helper {
                         mPreviewSize.getWidth(), mPreviewSize.getHeight());
             }
         }
+        if (recreateSession && surfaceTexture != null) {
+            createCaptureSession();
+        }
     }
 
     /**
      * Reconfigure capture session with a new preview surface (safe to call at runtime).
      */
     public void reconfigurePreviewSurface(@Nullable android.view.Surface surface) {
-        releaseOwnedPreviewSurface();
-        this.mPreviewSurface = surface;
-        this.mOwnsPreviewSurface = false;
-        this.mPreviewSurfaceTexture = null;
-        if (isCameraOpened()) {
-            // Rebuild the capture session with the updated targets
-            createCaptureSession();
-        }
+        setPreviewSurface(surface);
     }
 
     public void reconfigurePreviewSurfaceTexture(@Nullable SurfaceTexture surfaceTexture) {
         setOesPreviewSurfaceTexture(surfaceTexture);
-        if (isCameraOpened()) {
-            createCaptureSession();
+    }
+
+    private boolean hasCurrentCameraDevice() {
+        synchronized (mStateLock) {
+            return mCameraDevice != null
+                    && mActiveDeviceGeneration == mOpenGeneration.get()
+                    && !mClosingCamera;
         }
     }
 
@@ -606,9 +844,17 @@ public class Camera2Helper {
         mOwnsPreviewSurface = false;
     }
 
-    private void notifyCameraError(String reason) {
-        if (mCameraErrorCallback != null) {
-            mCameraErrorCallback.onCameraError(reason);
+    private void notifyCameraErrorIfGeneration(
+            long retiredGeneration,
+            String reason) {
+        synchronized (mStateLock) {
+            if (retiredGeneration == 0L
+                    || mOpenGeneration.get() != retiredGeneration) {
+                return;
+            }
+            if (mCameraErrorCallback != null) {
+                mCameraErrorCallback.onCameraError(reason);
+            }
         }
     }
 
@@ -619,36 +865,95 @@ public class Camera2Helper {
     }
 
     private void closeCaptureSessionQuietly() {
-        if (mCaptureSession == null) {
-            return;
-        }
-        try {
-            mCaptureSession.close();
-        } catch (Throwable t) {
-            NosmaiLog.d(TAG, "Capture session already closed: " + t.getMessage());
-        } finally {
+        CameraCaptureSession captureSession;
+        synchronized (mStateLock) {
+            mCaptureSessionGeneration.incrementAndGet();
+            mPendingSessionTarget = null;
+            captureSession = mCaptureSession;
             mCaptureSession = null;
+            mPreviewRequestBuilder = null;
+            mIsCameraOpened = false;
+        }
+        closeSessionInstance(captureSession);
+    }
+
+    private boolean isCaptureSessionRequestCurrentLocked(
+            @NonNull CameraDevice cameraDevice,
+            long openGeneration,
+            long sessionGeneration,
+            @NonNull Surface sessionTarget) {
+        return !mClosingCamera
+                && mCameraDevice == cameraDevice
+                && mActiveDeviceGeneration == openGeneration
+                && mOpenGeneration.get() == openGeneration
+                && mCaptureSessionGeneration.get() == sessionGeneration
+                && mPendingSessionTarget == sessionTarget;
+    }
+
+    private void detachSessionIfOwned(
+            @NonNull CameraCaptureSession cameraCaptureSession) {
+        synchronized (mStateLock) {
+            if (mCaptureSession == cameraCaptureSession) {
+                mCaptureSession = null;
+                mPreviewRequestBuilder = null;
+                mIsCameraOpened = false;
+            }
         }
     }
 
-    private void closeCameraAfterFailure(
+    private void closeSessionInstance(
+            @Nullable CameraCaptureSession cameraCaptureSession) {
+        if (cameraCaptureSession == null) return;
+        try {
+            cameraCaptureSession.close();
+        } catch (Throwable t) {
+            NosmaiLog.d(TAG, "Capture session already closed: " + t.getMessage());
+        }
+    }
+
+    private long closeCameraAfterFailure(
+            @NonNull CameraDevice cameraDevice,
+            long openGeneration,
+            long sessionGeneration,
+            @NonNull Surface sessionTarget,
             @Nullable CameraCaptureSession failedSession) {
-        if (failedSession != null && failedSession != mCaptureSession) {
-            try {
-                failedSession.close();
-            } catch (Throwable ignore) {
+        CameraCaptureSession registeredSession = null;
+        boolean ownsCurrentRequest;
+        long retiredGeneration = 0L;
+        synchronized (mStateLock) {
+            ownsCurrentRequest = isCaptureSessionRequestCurrentLocked(
+                    cameraDevice,
+                    openGeneration,
+                    sessionGeneration,
+                    sessionTarget);
+            if (ownsCurrentRequest) {
+                retiredGeneration = mOpenGeneration.incrementAndGet();
+                mCaptureSessionGeneration.incrementAndGet();
+                mPendingSessionTarget = null;
+                registeredSession = mCaptureSession;
+                mCaptureSession = null;
+                mPreviewRequestBuilder = null;
+                if (mCameraDevice == cameraDevice) {
+                    mCameraDevice = null;
+                    mActiveDeviceGeneration = 0L;
+                }
+                mIsCameraOpened = false;
             }
         }
-        closeCaptureSessionQuietly();
-        CameraDevice cameraDevice = mCameraDevice;
-        mCameraDevice = null;
-        if (cameraDevice != null) {
-            try {
-                cameraDevice.close();
-            } catch (Throwable ignore) {
-            }
+
+        if (failedSession != null && failedSession != registeredSession) {
+            closeSessionInstance(failedSession);
         }
-        mIsCameraOpened = false;
+        if (!ownsCurrentRequest) {
+            return 0L;
+        }
+
+        closeSessionInstance(registeredSession);
+        try {
+            cameraDevice.close();
+        } catch (Throwable ignore) {
+        }
+        return retiredGeneration;
     }
 
     private final ImageReader.OnImageAvailableListener mOnImageAvailableListener =
@@ -662,9 +967,12 @@ public class Camera2Helper {
                         return;
                     }
 
+                    if (reader != mImageReader) {
+                        return;
+                    }
+
                     // A callback must be registered
                     if (mFrameCallback == null) {
-                        image.close();
                         return;
                     }
 
@@ -730,7 +1038,7 @@ public class Camera2Helper {
         return mCurrentCameraFacing == CameraCharacteristics.LENS_FACING_FRONT;
     }
 
-    // 🔧 DISABLED: Rotation buffer method disabled
+    // Rotation buffer method is disabled.
     // public byte[] getRotationBuffer() { return null; }
 
     // Camera controls
@@ -796,12 +1104,12 @@ public class Camera2Helper {
     }
 
     /**
-     * 📊 SMART FPS SELECTION: Get the best FPS range supported by device
+     * Select the best FPS range supported by the device.
      * Priority: 30 FPS > 25 FPS > highest available
      */
     private Range<Integer> getBestFpsRange() {
         if (mCameraCharacteristics == null) {
-            NosmaiLog.w(TAG, "⚠️ Camera characteristics not available, using default 15-30 FPS");
+            NosmaiLog.w(TAG, "Camera characteristics not available, using default 15-30 FPS");
             return new Range<>(15, 30);
         }
 
@@ -809,12 +1117,12 @@ public class Camera2Helper {
             // Get all supported FPS ranges
             Range<Integer>[] fpsRanges = mCameraCharacteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
             if (fpsRanges == null || fpsRanges.length == 0) {
-                NosmaiLog.w(TAG, "⚠️ No FPS ranges available, using default");
+                NosmaiLog.w(TAG, "No FPS ranges available, using default");
                 return new Range<>(15, 30);
             }
 
             // Log all available FPS ranges for debugging
-            NosmaiLog.i(TAG, "📊 Available FPS ranges:");
+            NosmaiLog.i(TAG, "Available FPS ranges:");
             for (Range<Integer> range : fpsRanges) {
                 NosmaiLog.i(TAG, "   - " + range.getLower() + " to " + range.getUpper() + " FPS");
             }
@@ -822,7 +1130,7 @@ public class Camera2Helper {
             // Priority 1: Try to find 30 FPS fixed
             for (Range<Integer> range : fpsRanges) {
                 if (range.getLower() >= 30 && range.getUpper() >= 30) {
-                    NosmaiLog.i(TAG, "✅ Selected: 30 FPS fixed range");
+                    NosmaiLog.i(TAG, "Selected: 30 FPS fixed range");
                     return new Range<>(30, 30);
                 }
             }
@@ -830,7 +1138,7 @@ public class Camera2Helper {
             // Priority 2: Try to find range that includes 30 FPS
             for (Range<Integer> range : fpsRanges) {
                 if (range.getLower() <= 30 && range.getUpper() >= 30) {
-                    NosmaiLog.i(TAG, "✅ Selected: Variable range with 30 FPS max");
+                    NosmaiLog.i(TAG, "Selected: Variable range with 30 FPS max");
                     return range;
                 }
             }
@@ -843,11 +1151,11 @@ public class Camera2Helper {
                 }
             }
 
-            NosmaiLog.i(TAG, "✅ Selected: Best available range " + bestRange);
+            NosmaiLog.i(TAG, "Selected: Best available range " + bestRange);
             return bestRange;
 
         } catch (Exception e) {
-            NosmaiLog.e(TAG, "❌ Error getting FPS ranges: " + e.getMessage());
+            NosmaiLog.e(TAG, "Error getting FPS ranges: " + e.getMessage());
             return new Range<>(15, 30);
         }
     }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.3
+
+- Updated Android and iOS native dependencies to Nosmai Effects SDK 3.0.5.
+- Added Android `armeabi-v7a` support while retaining `arm64-v8a`.
+- Improved beauty and face-shaping consistency.
+- Improved camera lifecycle and stability across repeated preview sessions.
+- Maintained backward compatibility with the existing public Dart API.
+
 ## 1.0.2
 
 - Improved performance, stability, and reliability.

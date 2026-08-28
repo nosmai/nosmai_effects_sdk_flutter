@@ -5,7 +5,8 @@ import 'package:nosmai_effects_sdk/nosmai_effects_sdk.dart';
 ///
 /// This class ensures the Nosmai SDK is properly initialized once for the entire
 /// application and provides centralized access to the SDK instance. It handles
-/// initialization, error states, and performance optimizations like camera pre-warming.
+/// initialization and error states. Camera processing is owned by
+/// [NosmaiCameraPreview] and must not be started before the preview exists.
 ///
 /// Example usage:
 /// ```dart
@@ -49,8 +50,8 @@ class NosmaiAppManager {
   /// Initialize the Nosmai SDK with the provided license key
   ///
   /// This method ensures the SDK is initialized only once. If already initialized,
-  /// it returns true immediately. After successful initialization, it automatically
-  /// pre-warms the camera for better performance.
+  /// it returns true immediately. Camera processing starts automatically when a
+  /// [NosmaiCameraPreview] is mounted.
   ///
   /// [licenseKey] - Your Nosmai API license key
   ///
@@ -58,68 +59,34 @@ class NosmaiAppManager {
   /// Check [initError] for error details on failure.
   Future<bool> initialize(String licenseKey) async {
     if (_isInitialized) {
-      debugPrint('✅ Nosmai SDK already initialized');
+      debugPrint('Nosmai SDK already initialized');
       return true;
     }
 
     try {
-      debugPrint('🚀 Initializing Nosmai SDK...');
+      debugPrint('Initializing Nosmai SDK...');
       final success = await NosmaiFlutter.initialize(licenseKey);
 
       if (success) {
         _isInitialized = true;
         _initError = null;
-        debugPrint('✅ Nosmai SDK initialized successfully');
+        debugPrint('Nosmai SDK initialized successfully');
 
-        // Pre-warm camera for faster startup
-        _prewarmCamera();
+        // Local catalog loading is safe to warm independently of the camera.
+        _preloadEssentialFilters();
       } else {
         _isInitialized = false;
         _initError = 'Failed to initialize SDK with license';
-        debugPrint('❌ Nosmai SDK initialization failed');
+        debugPrint('Nosmai SDK initialization failed');
       }
 
       return success;
     } catch (e) {
       _isInitialized = false;
       _initError = e.toString();
-      debugPrint('❌ Nosmai SDK initialization error: $e');
+      debugPrint('Nosmai SDK initialization error: $e');
       return false;
     }
-  }
-
-  void _prewarmCamera() {
-    Future.microtask(() async {
-      try {
-        final stopwatch = Stopwatch()..start();
-        debugPrint('⏱️ Starting camera pre-warming...');
-
-        // Pre-configure front camera (most commonly used first)
-        final configStart = Stopwatch()..start();
-        await _nosmai.configureCamera(
-          position: NosmaiCameraPosition.front,
-        );
-        configStart.stop();
-        debugPrint(
-            '⏱️ Pre-warming: Camera config took ${configStart.elapsedMilliseconds}ms');
-
-        // Pre-start processing for instant camera
-        final processingStart = Stopwatch()..start();
-        await _nosmai.startProcessing();
-        processingStart.stop();
-        debugPrint(
-            '⏱️ Pre-warming: Processing start took ${processingStart.elapsedMilliseconds}ms');
-
-        // Pre-load essential filters in background
-        _preloadEssentialFilters();
-
-        stopwatch.stop();
-        debugPrint(
-            '📷 Camera pre-warmed and ready in ${stopwatch.elapsedMilliseconds}ms');
-      } catch (e) {
-        debugPrint('⚠️ Camera pre-warming failed: $e');
-      }
-    });
   }
 
   /// Pre-load essential filters for faster access
@@ -131,9 +98,9 @@ class NosmaiAppManager {
       try {
         // Pre-load only local filters (fast)
         await _nosmai.getLocalFilters();
-        debugPrint('🎭 Essential filters pre-loaded');
+        debugPrint('Essential filters pre-loaded');
       } catch (e) {
-        debugPrint('⚠️ Filter pre-loading failed: $e');
+        debugPrint('Filter pre-loading failed: $e');
       }
     });
   }
@@ -146,7 +113,7 @@ class NosmaiAppManager {
     if (_isInitialized) {
       await _nosmai.cleanup();
       _isInitialized = false;
-      debugPrint('🧹 Nosmai SDK cleaned up');
+      debugPrint('Nosmai SDK cleaned up');
     }
   }
 }

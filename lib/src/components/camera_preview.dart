@@ -105,10 +105,16 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
   late final String _viewKey;
   bool _notifiedInitialized = false;
   bool _iosPreviewStartRequested = false;
+  Completer<void>? _readyCompleter;
 
   void _handleNativeCameraReady() {
     if (!mounted || _notifiedInitialized) return;
     _notifiedInitialized = true;
+    final readyCompleter = _readyCompleter;
+    _readyCompleter = null;
+    if (readyCompleter != null && !readyCompleter.isCompleted) {
+      readyCompleter.complete();
+    }
     setState(() {
       _isInitialized = true;
       _isInitializing = false;
@@ -131,10 +137,8 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
 
     if (defaultTargetPlatform == TargetPlatform.android) {
       CameraStateNotifier.instance.addReadyCallback(_handleNativeCameraReady);
-      setState(() {
-        _isInitializing = true;
-        _initError = null;
-      });
+      _isInitializing = true;
+      _initError = null;
     } else {
       _isInitializing = true;
       _isInitialized = false;
@@ -176,6 +180,13 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
   @override
   void dispose() {
     _iosPreviewStartRequested = false;
+    final readyCompleter = _readyCompleter;
+    _readyCompleter = null;
+    if (readyCompleter != null && !readyCompleter.isCompleted) {
+      readyCompleter.completeError(
+        StateError('Camera preview was disposed before becoming ready.'),
+      );
+    }
     widget.controller?._detach();
     if (defaultTargetPlatform == TargetPlatform.android) {
       CameraStateNotifier.instance
@@ -185,6 +196,15 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
     WidgetsBinding.instance.removeObserver(this);
 
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant NosmaiCameraPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.controller, widget.controller)) {
+      oldWidget.controller?._detach();
+      widget.controller?._attach(this);
+    }
   }
 
   @override
@@ -255,7 +275,6 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
       if (kDebugMode) {
         debugPrint('App Resumed: Camera is ready again.');
       }
-      widget.onInitialized?.call();
     } catch (e) {
       if (kDebugMode) {
         debugPrint('Error on resuming camera: $e');
@@ -301,24 +320,37 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
 
   /// Manually reinitialize the camera (useful for error recovery)
   Future<void> reinitialize() async {
-    // Force cleanup
-    await _cleanupCamera();
-
-    // Longer delay to ensure everything is cleaned up
-    await Future.delayed(const Duration(milliseconds: 1000));
-
     if (defaultTargetPlatform == TargetPlatform.android) {
-      // AndroidView path: minimal delay and mark initialized
-      await Future.delayed(const Duration(milliseconds: 50));
-      if (mounted) {
+      if (_isInitializing) return;
+
+      _notifiedInitialized = false;
+      final ready = Completer<void>();
+      _readyCompleter = ready;
+      setState(() {
+        _isInitialized = false;
+        _isInitializing = true;
+        _initError = null;
+      });
+
+      try {
+        await _nosmaiFlutter.reinitializePreview();
+        await ready.future.timeout(const Duration(seconds: 12));
+      } catch (error) {
+        if (identical(_readyCompleter, ready)) {
+          _readyCompleter = null;
+        }
+        if (!mounted) return;
+        final message = 'Failed to reinitialize camera preview: $error';
         setState(() {
-          _isInitialized = true;
+          _isInitialized = false;
           _isInitializing = false;
-          _initError = null;
+          _initError = message;
         });
+        widget.onError?.call(message);
       }
-      widget.onInitialized?.call();
     } else {
+      await _cleanupCamera();
+      await Future.delayed(const Duration(milliseconds: 250));
       // Force reset to initialized state (camera is pre-warmed) on iOS
       if (mounted) {
         setState(() {

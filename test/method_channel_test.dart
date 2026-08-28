@@ -34,6 +34,58 @@ void main() {
     );
   });
 
+  test('built-in strengths cross the channel as normalized values', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+
+    await platform.applySkinSmoothing(0.75);
+    await platform.applySkinWhitening(0.4);
+    await platform.applyContourHighlighter(0.55);
+    await platform.applyDarkCircleCorrector(0.35);
+    await platform.applySharpening(0.6);
+    await platform.applyTeethWhitening(0.8);
+
+    expect(calls[0].arguments, {'level': 0.75});
+    expect(calls[1].arguments, {'level': 0.4});
+    expect(calls[2].arguments, {'level': 0.55});
+    expect(calls[3].arguments, {'level': 0.35});
+    expect(calls[4].arguments, {'level': 0.6});
+    expect(calls[5].arguments, {'intensity': 0.8});
+  });
+
+  test('signed reshape uses stable cross-platform ids and values', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+
+    await platform.setReshape(
+      type: NosmaiReshapeType.lip,
+      value: 0.4,
+    );
+    await platform.setReshape(
+      type: NosmaiReshapeType.jaw,
+      value: -0.35,
+    );
+    await platform.setReshape(
+      type: NosmaiReshapeType.forehead,
+      value: 0.2,
+    );
+
+    expect(calls[0].method, 'setReshape');
+    expect(calls[0].arguments, {'type': 0, 'value': 0.4});
+    expect(calls[1].arguments, {'type': 7, 'value': -0.35});
+    expect(calls[2].arguments, {'type': 9, 'value': 0.2});
+    expect(
+      NosmaiReshapeType.values.map((type) => type.value),
+      orderedEquals(List<int>.generate(10, (index) => index)),
+    );
+  });
+
   test('cloud filters propagate network errors', () async {
     messenger.setMockMethodCallHandler(channel, (call) async {
       throw PlatformException(code: 'NETWORK_UNAVAILABLE');
@@ -196,6 +248,16 @@ void main() {
             .having((error) => error.code, 'code', 'EFFECT_LOAD_ERROR'),
       ),
     );
+  });
+
+  test('endCameraSession uses the dedicated native lifecycle method', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'endCameraSession');
+      expect(call.arguments, isNull);
+      return true;
+    });
+
+    await expectLater(platform.endCameraSession(), completion(isTrue));
   });
 
   test('filter parameter preserves current, default, range, and options', () {

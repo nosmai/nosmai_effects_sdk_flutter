@@ -64,10 +64,7 @@ mixin NosmaiCameraLifecycleMixin<T extends StatefulWidget> on State<T> {
 
     try {
       if (_nosmaiFlutter.isInitialized) {
-        if (_nosmaiFlutter.isProcessing) {
-          await _nosmaiFlutter.stopProcessing();
-        }
-        await _nosmaiFlutter.detachCameraView();
+        await _nosmaiFlutter.endCameraSession();
       }
     } catch (e) {
       // Ignore cleanup errors

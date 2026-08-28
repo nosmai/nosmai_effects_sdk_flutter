@@ -918,7 +918,7 @@ class FilterValidationResult {
 
   @override
   String toString() {
-    final status = isValid ? '✅' : '❌';
+    final status = isValid ? 'valid' : 'invalid';
     return 'FilterValidationResult($status $folderName, errors: ${errors.length}, warnings: ${warnings.length})';
   }
 }

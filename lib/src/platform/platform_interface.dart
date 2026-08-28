@@ -287,6 +287,15 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('detachCameraView() has not been implemented.');
   }
 
+  /// End the current camera-route session before its PlatformView is removed.
+  ///
+  /// This is intentionally different from full SDK cleanup: licensing and the
+  /// process-wide SDK stay initialized, while preview-bound render state is
+  /// retired on the still-valid native GL/view context.
+  Future<bool> endCameraSession() {
+    throw UnimplementedError('endCameraSession() has not been implemented.');
+  }
+
   /// Reinitialize the preview (useful for navigation recovery)
   Future<void> reinitializePreview() {
     throw UnimplementedError('reinitializePreview() has not been implemented.');
@@ -313,6 +322,16 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
 
   Future<void> applySkinWhitening(double level) {
     throw UnimplementedError('applySkinWhitening() has not been implemented.');
+  }
+
+  Future<void> applyContourHighlighter(double level) {
+    throw UnimplementedError(
+        'applyContourHighlighter() has not been implemented.');
+  }
+
+  Future<void> applyDarkCircleCorrector(double level) {
+    throw UnimplementedError(
+        'applyDarkCircleCorrector() has not been implemented.');
   }
 
   Future<void> applySharpening(double level) {
@@ -599,6 +618,14 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
   /// Set nose slim level (0.0 - 1.0)
   Future<void> setNoseSlimLevel(double level) {
     throw UnimplementedError('setNoseSlimLevel() has not been implemented.');
+  }
+
+  /// Set a signed mesh-warp reshape value (-1.0 - 1.0, 0.0 is neutral).
+  Future<void> setReshape({
+    required NosmaiReshapeType type,
+    required double value,
+  }) {
+    throw UnimplementedError('setReshape() has not been implemented.');
   }
 
   /// Remove all face morphing effects

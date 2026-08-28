@@ -13,6 +13,21 @@
 #define NOSMAI_PLUGIN_LOG(...) do { } while (0)
 #endif
 
+// These selectors were added in the native iOS 3.0.5 release. Declaring them
+// here keeps this wrapper source-compatible with earlier 3.x headers; every
+// call is still guarded so an older installed binary fails safely.
+@interface NosmaiEffectsEngine (NosmaiFlutterBeautyV3Controls)
+- (void)applyFaceContourHighlighter:(float)level;
+- (void)applyDarkCircleCorrector:(float)level;
+@end
+
+// Kept as an NSInteger declaration so this wrapper also compiles against older
+// headers that predate the public NosmaiReshapeType enum. Runtime availability
+// is checked before every call.
+@interface NosmaiSDK (NosmaiFlutterUnifiedReshape)
+- (void)setReshapeType:(NSInteger)type value:(float)value;
+@end
+
 // NosmaiExternalProcessor interface
 @interface NosmaiExternalProcessor : NSObject
 @property (nonatomic, assign) BOOL isInitialized;
@@ -117,6 +132,12 @@
   else if ([@"applySkinWhitening" isEqualToString:method]) {
     [self handleApplySkinWhitening:call result:result];
   }
+  else if ([@"applyContourHighlighter" isEqualToString:method]) {
+    [self handleApplyContourHighlighter:call result:result];
+  }
+  else if ([@"applyDarkCircleCorrector" isEqualToString:method]) {
+    [self handleApplyDarkCircleCorrector:call result:result];
+  }
   else if ([@"applySharpening" isEqualToString:method]) {
     [self handleApplySharpening:call result:result];
   }
@@ -218,6 +239,9 @@
   }
   else if ([@"setNoseSlimLevel" isEqualToString:method]) {
     [self handleSetNoseSlimLevel:call result:result];
+  }
+  else if ([@"setReshape" isEqualToString:method]) {
+    [self handleSetReshape:call result:result];
   }
   else if ([@"removeAllMorphing" isEqualToString:method]) {
     [self handleRemoveAllMorphing:call result:result];
@@ -365,6 +389,9 @@
   }
   else if ([@"detachCameraView" isEqualToString:method]) {
     [self handleDetachCameraView:call result:result];
+  }
+  else if ([@"endCameraSession" isEqualToString:method]) {
+    [self handleEndCameraSession:call result:result];
   }
   else if ([@"reinitializePreview" isEqualToString:method]) {
     [self handleReinitializePreview:call result:result];
@@ -601,10 +628,10 @@
   @try {
     // Only stop camera capture - SDK processing stays active
     [[NosmaiCore shared].camera stopCapture];
-    NOSMAI_PLUGIN_LOG(@"⏸️ Camera paused successfully");
+    NOSMAI_PLUGIN_LOG(@"Camera paused successfully");
     result(@YES);
   } @catch (NSException *exception) {
-    NOSMAI_PLUGIN_LOG(@"❌ pauseCamera error: %@", exception.reason);
+    NOSMAI_PLUGIN_LOG(@"pauseCamera error: %@", exception.reason);
     result([FlutterError errorWithCode:@"PAUSE_ERROR"
                                message:exception.reason
                                details:exception.userInfo]);
@@ -622,10 +649,10 @@
   @try {
     // Only restart camera capture - SDK processing already active
     [[NosmaiCore shared].camera startCapture];
-    NOSMAI_PLUGIN_LOG(@"▶️ Camera resumed successfully");
+    NOSMAI_PLUGIN_LOG(@"Camera resumed successfully");
     result(@YES);
   } @catch (NSException *exception) {
-    NOSMAI_PLUGIN_LOG(@"❌ resumeCamera error: %@", exception.reason);
+    NOSMAI_PLUGIN_LOG(@"resumeCamera error: %@", exception.reason);
     result([FlutterError errorWithCode:@"RESUME_ERROR"
                                message:exception.reason
                                details:exception.userInfo]);
@@ -761,6 +788,74 @@
 
   @try {
     [[NosmaiCore shared].effects applySkinWhitening:level.floatValue];
+    result(nil);
+  } @catch (NSException *exception) {
+    result([FlutterError errorWithCode:@"FILTER_ERROR"
+                               message:exception.reason
+                               details:exception.userInfo]);
+  }
+}
+
+- (void)handleApplyContourHighlighter:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED"
+                               message:@"SDK must be initialized before applying filters"
+                               details:nil]);
+    return;
+  }
+
+  NSNumber* level = call.arguments[@"level"];
+  if (!level || !isfinite(level.doubleValue)) {
+    result([FlutterError errorWithCode:@"INVALID_ARGUMENTS"
+                               message:@"A finite level value is required"
+                               details:nil]);
+    return;
+  }
+
+  @try {
+    const float normalized = fmaxf(0.0f, fminf(1.0f, level.floatValue));
+    NosmaiEffectsEngine* effects = [NosmaiCore shared].effects;
+    if (![effects respondsToSelector:@selector(applyFaceContourHighlighter:)]) {
+      result([FlutterError errorWithCode:@"UNSUPPORTED_NATIVE_SDK"
+                                 message:@"Contour/highlighter requires NosmaiCameraSDK 3.0.5 or newer"
+                                 details:nil]);
+      return;
+    }
+    [effects applyFaceContourHighlighter:normalized];
+    result(nil);
+  } @catch (NSException *exception) {
+    result([FlutterError errorWithCode:@"FILTER_ERROR"
+                               message:exception.reason
+                               details:exception.userInfo]);
+  }
+}
+
+- (void)handleApplyDarkCircleCorrector:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED"
+                               message:@"SDK must be initialized before applying filters"
+                               details:nil]);
+    return;
+  }
+
+  NSNumber* level = call.arguments[@"level"];
+  if (!level || !isfinite(level.doubleValue)) {
+    result([FlutterError errorWithCode:@"INVALID_ARGUMENTS"
+                               message:@"A finite level value is required"
+                               details:nil]);
+    return;
+  }
+
+  @try {
+    const float normalized = fmaxf(0.0f, fminf(1.0f, level.floatValue));
+    NosmaiEffectsEngine* effects = [NosmaiCore shared].effects;
+    if (![effects respondsToSelector:@selector(applyDarkCircleCorrector:)]) {
+      result([FlutterError errorWithCode:@"UNSUPPORTED_NATIVE_SDK"
+                                 message:@"Dark-circle correction requires NosmaiCameraSDK 3.0.5 or newer"
+                                 details:nil]);
+      return;
+    }
+    [effects applyDarkCircleCorrector:normalized];
     result(nil);
   } @catch (NSException *exception) {
     result([FlutterError errorWithCode:@"FILTER_ERROR"
@@ -1551,6 +1646,45 @@
   }
 }
 
+- (void)handleSetReshape:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED"
+                               message:@"SDK must be initialized"
+                               details:nil]);
+    return;
+  }
+
+  NSNumber* type = call.arguments[@"type"];
+  NSNumber* value = call.arguments[@"value"];
+  if (!type || !value || type.integerValue < 0 || type.integerValue > 9) {
+    result([FlutterError errorWithCode:@"INVALID_ARGUMENTS"
+                               message:@"Reshape type must be between 0 and 9 and value is required"
+                               details:nil]);
+    return;
+  }
+
+  NosmaiSDK* sdk = [NosmaiSDK sharedInstance];
+  if (![sdk respondsToSelector:@selector(setReshapeType:value:)]) {
+    result([FlutterError errorWithCode:@"UNSUPPORTED_FEATURE"
+                               message:@"Installed native iOS SDK does not support unified reshape controls"
+                               details:nil]);
+    return;
+  }
+
+  double rawValue = value.doubleValue;
+  float normalized = isfinite(rawValue)
+      ? (float)fmax(-1.0, fmin(1.0, rawValue))
+      : 0.0f;
+  @try {
+    [sdk setReshapeType:type.integerValue value:normalized];
+    result(nil);
+  } @catch (NSException *exception) {
+    result([FlutterError errorWithCode:@"MORPHING_ERROR"
+                               message:exception.reason
+                               details:exception.userInfo]);
+  }
+}
+
 - (void)handleRemoveAllMorphing:(FlutterMethodCall*)call result:(FlutterResult)result {
   if (!self.isInitialized) {
     result([FlutterError errorWithCode:@"NOT_INITIALIZED"
@@ -1974,23 +2108,82 @@
 - (void)handleDetachCameraView:(FlutterMethodCall*)call result:(FlutterResult)result {
   @try {
     if (self.isInitialized) {
-      dispatch_semaphore_wait(self.cameraStateSemaphore, DISPATCH_TIME_FOREVER);
-
+      // Do not hold cameraStateSemaphore while detaching. The camera is allowed
+      // to synchronously call nosmaiCameraDidDetachFromView, which updates the
+      // same state and would otherwise deadlock this method.
       BOOL detached = [NosmaiCameraPreviewView detachActivePreview];
+
+      dispatch_semaphore_wait(self.cameraStateSemaphore, DISPATCH_TIME_FOREVER);
       self.isCameraAttached = NO;
+      dispatch_semaphore_signal(self.cameraStateSemaphore);
+
       [[NosmaiSDK sharedInstance] setPreviewView:nil];
 
       if (detached) {
         [self.channel invokeMethod:@"onCameraDetached" arguments:nil];
       }
-      dispatch_semaphore_signal(self.cameraStateSemaphore);
     }
     result(nil);
   } @catch (NSException *exception) {
-    dispatch_semaphore_signal(self.cameraStateSemaphore);
     result([FlutterError errorWithCode:@"DETACH_CAMERA_ERROR"
                                message:exception.reason
                                details:exception.userInfo]);
+  }
+}
+
+- (void)handleEndCameraSession:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result(@NO);
+    return;
+  }
+
+  __weak typeof(self) weakSelf = self;
+  void (^finishSession)(void) = ^{
+    __strong typeof(weakSelf) strongSelf = weakSelf;
+    if (!strongSelf) {
+      result(@NO);
+      return;
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      @try {
+        // Retire preview-bound visual state while the old render view is still
+        // valid. The next route can then reapply its selected state to a clean
+        // graph without inheriting a stale target.
+        [[NosmaiCore shared].effects clearAll];
+        [[NosmaiSDK sharedInstance] stopProcessing];
+        [[NosmaiCore shared].camera stopCapture];
+
+        BOOL detached = [NosmaiCameraPreviewView detachActivePreview];
+        [[NosmaiSDK sharedInstance] setPreviewView:nil];
+
+        dispatch_semaphore_wait(strongSelf.cameraStateSemaphore,
+                                DISPATCH_TIME_FOREVER);
+        strongSelf.isCameraAttached = NO;
+        dispatch_semaphore_signal(strongSelf.cameraStateSemaphore);
+
+        if (detached) {
+          [strongSelf.channel invokeMethod:@"onCameraDetached" arguments:nil];
+        }
+        result(@YES);
+      } @catch (NSException *exception) {
+        result([FlutterError errorWithCode:@"CAMERA_SESSION_END_ERROR"
+                                   message:exception.reason
+                                   details:exception.userInfo]);
+      }
+    });
+  };
+
+  if (self.isRecording) {
+    [[NosmaiCore shared] stopRecordingWithCompletion:^(__unused NSURL *videoURL,
+                                                        __unused NSError *error) {
+      self.isRecording = NO;
+      [self.recordingProgressTimer invalidate];
+      self.recordingProgressTimer = nil;
+      finishSession();
+    }];
+  } else {
+    finishSession();
   }
 }
 
@@ -4508,7 +4701,7 @@ static dispatch_once_t _flipCIContextOnceToken;
             kCIContextUseSoftwareRenderer: @NO,  // Use GPU
             kCIContextPriorityRequestLow: @NO    // High priority
         }];
-        NOSMAI_PLUGIN_LOG(@"✅ Created shared CIContext for manual flip (GPU-accelerated)");
+        NOSMAI_PLUGIN_LOG(@"Created shared CIContext for manual flip (GPU-accelerated)");
     });
     return _sharedFlipCIContext;
 }
@@ -4521,7 +4714,7 @@ static dispatch_once_t _flipCIContextOnceToken;
     @autoreleasepool {
         CIImage *ciImage = [CIImage imageWithCVPixelBuffer:pixelBuffer];
         if (!ciImage) {
-            NOSMAI_PLUGIN_LOG(@"⚠️ Failed to create CIImage from pixelBuffer");
+            NOSMAI_PLUGIN_LOG(@"Failed to create CIImage from pixelBuffer");
             return NULL;
         }
 
@@ -4542,7 +4735,7 @@ static dispatch_once_t _flipCIContextOnceToken;
         );
 
         if (status != kCVReturnSuccess || !flippedBuffer) {
-            NOSMAI_PLUGIN_LOG(@"⚠️ Failed to create flipped CVPixelBuffer: %d", (int)status);
+            NOSMAI_PLUGIN_LOG(@"Failed to create flipped CVPixelBuffer: %d", (int)status);
             return NULL;
         }
 
@@ -4573,7 +4766,7 @@ static dispatch_once_t _flipCIContextOnceToken;
         [sdk setProcessingMode:NosmaiProcessingModeOffscreen];
         [sdk setLiveFrameOutputEnabled:YES];
         isOffscreenInitialized = YES;
-        NOSMAI_PLUGIN_LOG(@"✅ Nosmai offscreen mode initialized");
+        NOSMAI_PLUGIN_LOG(@"Nosmai offscreen mode initialized");
     }
 
     // Lazy init external processor
@@ -4685,7 +4878,7 @@ static dispatch_once_t _flipCIContextOnceToken;
 #pragma mark - Reset External Frame Mode
 
 + (void)resetExternalFrameMode {
-    NOSMAI_PLUGIN_LOG(@"🔄 Resetting external frame mode...");
+    NOSMAI_PLUGIN_LOG(@"Resetting external frame mode...");
 
     // Reset offscreen initialization flag
     isOffscreenInitialized = NO;
@@ -4708,10 +4901,10 @@ static dispatch_once_t _flipCIContextOnceToken;
         [sdk setProcessingMode:NosmaiProcessingModeLive];
         [sdk setLiveFrameOutputEnabled:NO];
         [sdk setCVPixelBufferCallback:nil];
-        NOSMAI_PLUGIN_LOG(@"✅ SDK reset to live camera mode");
+        NOSMAI_PLUGIN_LOG(@"SDK reset to live camera mode");
     }
 
-    NOSMAI_PLUGIN_LOG(@"✅ External frame mode reset complete");
+    NOSMAI_PLUGIN_LOG(@"External frame mode reset complete");
 }
 
 #pragma mark - Background Segmentation Methods

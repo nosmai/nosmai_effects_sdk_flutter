@@ -19,11 +19,14 @@ class BeautyFilterScreen extends StatefulWidget {
   State<BeautyFilterScreen> createState() => _BeautyFilterScreenState();
 }
 
-class _BeautyFilterScreenState extends State<BeautyFilterScreen> {
+class _BeautyFilterScreenState extends State<BeautyFilterScreen>
+    with NosmaiCameraLifecycleMixin {
   final NosmaiFlutter _nosmai = NosmaiFlutter.instance;
 
   // Initialization state
   bool _isInitialized = false;
+  bool _exitInProgress = false;
+  bool _allowRoutePop = false;
   String _selectedCategory = 'beauty';
 
   // Beauty filter values
@@ -75,34 +78,26 @@ class _BeautyFilterScreenState extends State<BeautyFilterScreen> {
   ];
 
   @override
-  void initState() {
-    super.initState();
-    _initializeCamera();
+  void onCameraInitialized() {
+    if (mounted) {
+      setState(() => _isInitialized = true);
+    }
   }
 
-  /// Initialize camera for beauty filter screen
-  ///
-  /// Configures the camera with front-facing position (typical for beauty filters)
-  /// and starts processing. Face detection is automatically enabled when beauty
-  /// filters are used.
-  Future<void> _initializeCamera() async {
-    try {
-      // Configure camera if not already done
-      await _nosmai.configureCamera(
-        position: NosmaiCameraPosition.front,
-      );
+  @override
+  void onCameraError(String error) {
+    debugPrint('Camera preview error: $error');
+  }
 
-      // Face detection is automatically enabled when beauty filters are used
+  Future<void> _closeCameraScreen([Object? result]) async {
+    if (_exitInProgress) return;
+    _exitInProgress = true;
 
-      // Start processing
-      await _nosmai.startProcessing();
+    await cleanupBeforeNavigation();
 
-      setState(() {
-        _isInitialized = true;
-      });
-    } catch (e) {
-      debugPrint('Error initializing camera: $e');
-    }
+    if (!mounted) return;
+    setState(() => _allowRoutePop = true);
+    Navigator.of(context).pop(result);
   }
 
   /// Apply all beauty filters with current values
@@ -155,21 +150,12 @@ class _BeautyFilterScreenState extends State<BeautyFilterScreen> {
 
   /// Apply HSB (Hue, Saturation, Brightness) filters
   ///
-  /// This method applies HSB adjustments. Note that hue adjustment is handled
-  /// separately since it's not implemented in the HSB filter directly.
+  /// Hue uses degrees while saturation and brightness are factors with 1.0 as
+  /// the neutral value.
   Future<void> _applyHSBFilters() async {
     try {
-      // Apply HSB values (Note: Hue in HSB is not implemented in SDK)
-      // So we use the standalone applyHue filter for hue adjustment
-      if (_hsbHue != 0.0) {
-        // Convert from -360 to 360 range to 0 to 360 range for applyHue
-        double hueValue = _hsbHue < 0 ? _hsbHue + 360 : _hsbHue;
-        await _nosmai.applyHue(hueValue);
-      }
-
-      // Apply saturation and brightness through HSB
       await _nosmai.adjustHSB(
-        hue: 0.0, // Always 0 since hue is not implemented in HSB
+        hue: _hsbHue,
         saturation: _hsbSaturation,
         brightness: _hsbBrightness,
       );
@@ -188,7 +174,7 @@ class _BeautyFilterScreenState extends State<BeautyFilterScreen> {
     });
 
     try {
-      await _nosmai.removeBuiltInFilters();
+      await _nosmai.removeAllBeautyEffects();
     } catch (e) {
       debugPrint('Error resetting filters: $e');
     }
@@ -316,7 +302,7 @@ class _BeautyFilterScreenState extends State<BeautyFilterScreen> {
           label: 'Skin Smoothing',
           value: _skinSmoothing,
           min: 0.0,
-          max: 10.0,
+          max: 1.0,
           onChanged: (value) => setState(() => _skinSmoothing = value),
           onChangeEnd: _applyBeautyFilters,
         ),
@@ -324,7 +310,7 @@ class _BeautyFilterScreenState extends State<BeautyFilterScreen> {
           label: 'Skin Whitening',
           value: _skinWhitening,
           min: 0.0,
-          max: 10.0,
+          max: 1.0,
           onChanged: (value) => setState(() => _skinWhitening = value),
           onChangeEnd: _applyBeautyFilters,
         ),
@@ -386,7 +372,7 @@ class _BeautyFilterScreenState extends State<BeautyFilterScreen> {
           label: 'Sharpening',
           value: _sharpening,
           min: 0.0,
-          max: 10.0,
+          max: 1.0,
           onChanged: (value) => setState(() => _sharpening = value),
           onChangeEnd: _applyEffectFilters,
         ),
@@ -424,7 +410,7 @@ class _BeautyFilterScreenState extends State<BeautyFilterScreen> {
         _buildSlider(
           label: 'Hue',
           value: _hsbHue,
-          min: -360.0,
+          min: 0.0,
           max: 360.0,
           onChanged: (value) => setState(() => _hsbHue = value),
           onChangeEnd: _applyHSBFilters,
@@ -451,123 +437,126 @@ class _BeautyFilterScreenState extends State<BeautyFilterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: const Text(
-          'Beauty & Filters',
-          style: TextStyle(color: Colors.white),
+    return PopScope<Object?>(
+      canPop: _allowRoutePop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
+          _closeCameraScreen(result);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          title: const Text(
+            'Beauty & Filters',
+            style: TextStyle(color: Colors.white),
+          ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh, color: Colors.white),
+              onPressed: _resetAllFilters,
+              tooltip: 'Reset All',
+            ),
+            IconButton(
+              icon: const Icon(Icons.flip_camera_ios, color: Colors.white),
+              onPressed: () async {
+                await _nosmai.switchCamera();
+              },
+            ),
+          ],
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white),
-            onPressed: _resetAllFilters,
-            tooltip: 'Reset All',
-          ),
-          IconButton(
-            icon: const Icon(Icons.flip_camera_ios, color: Colors.white),
-            onPressed: () async {
-              await _nosmai.switchCamera();
-            },
-          ),
-        ],
-      ),
-      extendBodyBehindAppBar: true,
-      body: Stack(
-        children: [
-          // Camera preview
-          if (_isInitialized)
-            const Positioned.fill(
+        extendBodyBehindAppBar: true,
+        body: Stack(
+          children: [
+            // Camera preview
+            Positioned.fill(
               child: RepaintBoundary(
                 child: NosmaiCameraPreview(
-                  key: ValueKey('beauty_camera_preview'),
+                  key: const ValueKey('beauty_camera_preview'),
+                  onInitialized: onCameraInitialized,
+                  onError: onCameraError,
                 ),
               ),
-            )
-          else
-            const Center(
-              child: CircularProgressIndicator(color: Color(0xFF6C5CE7)),
             ),
-
-          // Controls overlay
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.transparent,
-                    Colors.black.withAlpha(204),
-                  ],
-                ),
+            if (!_isInitialized)
+              const Center(
+                child: CircularProgressIndicator(color: Color(0xFF6C5CE7)),
               ),
-              child: SafeArea(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Category selector
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 8),
-                      child: Row(
-                        children: _filterCategories
-                            .map((category) {
-                              return [
-                                _buildCategoryChip(
-                                    category.id, category.label, category.icon),
-                                if (category != _filterCategories.last)
-                                  const SizedBox(width: 8),
-                              ];
-                            })
-                            .expand((widgets) => widgets)
-                            .toList(),
-                      ),
-                    ),
 
-                    // Controls based on selected category
-                    Container(
-                      height: 250,
-                      padding: const EdgeInsets.all(16),
-                      child: SingleChildScrollView(
-                        child: Builder(
-                          builder: (context) {
-                            switch (_selectedCategory) {
-                              case 'beauty':
-                                return _buildBeautyControls();
-                              case 'color':
-                                return _buildColorControls();
-                              case 'effect':
-                                return _buildEffectControls();
-                              case 'hsb':
-                                return _buildHSBControls();
-                              default:
-                                return const SizedBox.shrink();
-                            }
-                          },
+            // Controls overlay
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withAlpha(204),
+                    ],
+                  ),
+                ),
+                child: SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Category selector
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        child: Row(
+                          children: _filterCategories
+                              .map((category) {
+                                return [
+                                  _buildCategoryChip(category.id,
+                                      category.label, category.icon),
+                                  if (category != _filterCategories.last)
+                                    const SizedBox(width: 8),
+                                ];
+                              })
+                              .expand((widgets) => widgets)
+                              .toList(),
                         ),
                       ),
-                    ),
-                  ],
+
+                      // Controls based on selected category
+                      Container(
+                        height: 250,
+                        padding: const EdgeInsets.all(16),
+                        child: SingleChildScrollView(
+                          child: Builder(
+                            builder: (context) {
+                              switch (_selectedCategory) {
+                                case 'beauty':
+                                  return _buildBeautyControls();
+                                case 'color':
+                                  return _buildColorControls();
+                                case 'effect':
+                                  return _buildEffectControls();
+                                case 'hsb':
+                                  return _buildHSBControls();
+                                default:
+                                  return const SizedBox.shrink();
+                              }
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    // Don't cleanup SDK - let app manager handle it
-    super.dispose();
   }
 }
 
