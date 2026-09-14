@@ -2027,6 +2027,7 @@
 
 - (void)handleCleanup:(FlutterMethodCall*)call result:(FlutterResult)result {
   @try {
+    [NosmaiFlutterPlugin clearLiveStreamFrameCallback];
     [NosmaiCore shared].effects.gameEventHandler = nil;
     if (self.isInitialized) {
       [[NosmaiCore shared] cleanup];
@@ -4905,6 +4906,65 @@ static dispatch_once_t _flipCIContextOnceToken;
     }
 
     NOSMAI_PLUGIN_LOG(@"External frame mode reset complete");
+}
+
+#pragma mark - Live stream frame output (Nosmai-owns-camera push model)
+
+static NSLock *_liveStreamCallbackLock = nil;
+static BOOL _liveStreamOutputArmed = NO;
+
++ (void)setLiveStreamFrameCallback:
+    (void (^)(CVPixelBufferRef pixelBuffer, double timestamp))callback {
+    static dispatch_once_t lockOnce;
+    dispatch_once(&lockOnce, ^{
+        _liveStreamCallbackLock = [[NSLock alloc] init];
+    });
+
+    NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+    if (!sdk) {
+        NSLog(@"⚠️ setLiveStreamFrameCallback: SDK not available");
+        return;
+    }
+
+    [_liveStreamCallbackLock lock];
+    if (!callback) {
+        [_liveStreamCallbackLock unlock];
+        [self clearLiveStreamFrameCallback];
+        return;
+    }
+
+    [NosmaiCore shared].liveFrameStreamCallback =
+        ^(CVPixelBufferRef processedBuffer, double timestamp) {
+            if (!processedBuffer) return;
+            callback(processedBuffer, timestamp);
+        };
+    _liveStreamOutputArmed = YES;
+    [_liveStreamCallbackLock unlock];
+
+    NSLog(@"✅ Live stream frame output armed (preview stays live)");
+}
+
++ (void)clearLiveStreamFrameCallback {
+    if (!_liveStreamCallbackLock) return;
+
+    [_liveStreamCallbackLock lock];
+    if (_liveStreamOutputArmed) {
+        NosmaiCore *core = [NosmaiCore shared];
+
+        if (core.isRecording) {
+            core.liveFrameStreamCallback =
+                ^(CVPixelBufferRef processedBuffer, double timestamp) {
+                    // Recording still needs live-frame output enabled. Keep a no-op
+                    // consumer until recording owns the output lifecycle again.
+                };
+            NSLog(@"✅ Live stream frame output disarmed (recording remains active)");
+        } else {
+            core.liveFrameStreamCallback = nil;
+            NSLog(@"✅ Live stream frame output disarmed");
+        }
+        _liveStreamOutputArmed = NO;
+    }
+    [_liveStreamCallbackLock unlock];
 }
 
 #pragma mark - Background Segmentation Methods

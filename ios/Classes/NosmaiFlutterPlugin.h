@@ -27,4 +27,13 @@
 // This resets the SDK from offscreen mode back to normal camera mode
 + (void)resetExternalFrameMode;
 
+#pragma mark - Live stream frame output (Nosmai-owns-camera push model)
+
+// Arms a callback that receives every filtered frame produced by Nosmai.
++ (void)setLiveStreamFrameCallback:
+    (nullable void (^)(CVPixelBufferRef pixelBuffer, double timestamp))callback;
+
+// Disarms the filtered-frame callback without interrupting camera preview or recording.
++ (void)clearLiveStreamFrameCallback;
+
 @end
