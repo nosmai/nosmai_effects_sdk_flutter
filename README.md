@@ -23,6 +23,8 @@ Nosmai Effects can be used in:
 - Real-time camera preview with GPU-accelerated rendering
 - Face detection and face-tracked AR effects
 - 3D masks, stickers, particles, and animated overlays
+- Face stickers from your own image or animated GIF, anchored to facial landmarks
+- Hair colouring driven by on-device hair segmentation
 - Skin smoothing, whitening, sharpening, and teeth whitening
 - Lipstick, eyeshadow, blusher, eyelashes, and eyebrows
 - Face slimming, eye size, nose, chin, jaw, lips, forehead, and brow controls
@@ -71,6 +73,60 @@ Convenience methods are also available for lip size, chin size, eyebrow
 position/thickness, jawline, mouth width, and forehead size. Existing
 one-direction face-slim, eye-enlargement, and nose-slim methods remain
 `0.0...1.0` for backward compatibility.
+
+## Face stickers
+
+Pin any image, or an animated GIF, to the tracked face. The developer hands the
+SDK the file's bytes; frames, timing and looping are handled inside the SDK.
+
+```dart
+// From a bundled asset (PNG, JPEG or GIF):
+await nosmai.setFaceStickerAsset(
+  'assets/stickers/heart.gif',
+  anchor: NosmaiFaceStickerAnchor.aboveHead,
+);
+
+// Or from bytes you already have (gallery, network, a rendered widget):
+await nosmai.setFaceSticker(bytes, anchor: NosmaiFaceStickerAnchor.nose);
+
+// Cheap to call from a gesture or slider; pass the same anchor.
+await nosmai.setFaceStickerPlacement(
+  anchor: NosmaiFaceStickerAnchor.nose,
+  offsetY: 0.05, // a little above the tip, in face units
+  scale: 0.4,    // width as a multiple of face width; 0 = anchor default
+);
+
+await nosmai.clearFaceSticker();
+```
+
+Anchors: `center`, `forehead`, `aboveHead`, `leftEye`, `rightEye`, `eyes`
+(sunglasses, masks), `nose`, `mouth`, `chin`; left and right are the subject's.
+The sticker shares the AR slot with `.nosmai` effects: applying one replaces
+the other, and built-in beauty is cleared when a sticker is applied. While a
+sticker is active, `activeEffectPath` stays null; check
+`isFaceStickerActive()` or `NosmaiActiveEffects.hasFaceSticker`.
+
+## Hair colouring
+
+```dart
+// Enable with a colour; intensity 0.0...1.0 (default 0.6)
+await nosmai.setHairColor(const Color(0xFFB35933), intensity: 0.6);
+
+// Adjust later
+await nosmai.setHairColorIntensity(0.8);
+
+// Remove
+await nosmai.removeHairColoring();
+
+final on = await nosmai.isHairColoringActive();
+```
+
+Hair colouring is a built-in beauty effect like teeth whitening or eye colour:
+it combines with lipstick, blusher and the other built-ins, is cleared by
+`removeAllBeautyEffects()`, and never touches the AR slot. The hair
+segmentation model runs on its own native thread; the first coloured frame
+appears once it has warmed up. `NosmaiActiveEffects.hasHairColoring` mirrors
+`isHairColoringActive()`. An older iOS binary reports `UNSUPPORTED_SDK_VERSION`.
 
 ## Getting started
 
@@ -122,8 +178,8 @@ could otherwise stop a newly-created preview.
 
 ### Built-in adjustment ranges
 
-- Skin smoothing, whitening, sharpening, teeth whitening, and makeup intensity:
-  `0.0...1.0`
+- Skin smoothing, whitening, sharpening, teeth whitening, hair colour intensity,
+  and makeup intensity: `0.0...1.0`
 - Brightness: `-1.0...1.0` (`0.0` is neutral)
 - Contrast, RGB channels, HSB saturation, and HSB brightness: `0.0...2.0`
   (`1.0` is neutral)
@@ -132,10 +188,10 @@ could otherwise stop a newly-created preview.
 
 ## Native SDK distribution
 
-- Version `1.0.3` uses Android Effects SDK `3.0.5` from the official GitHub
-  release and resolves `NosmaiCameraSDK 3.0.5` through CocoaPods on iOS.
+- Version `2.0.0` uses Android Effects SDK `3.0.6` from the official GitHub
+  release and resolves `NosmaiCameraSDK 3.0.6` through CocoaPods on iOS.
 - The Flutter plugin resolves the Android AAR from
-  [Nosmai Effects SDK for Android releases](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.5);
+  [Nosmai Effects SDK for Android releases](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.6);
   applications do not need to keep a local AAR in `android/app/libs`.
 - Native SDK binaries and licensed `.nosmai` assets are not bundled in the
   pub.dev package.

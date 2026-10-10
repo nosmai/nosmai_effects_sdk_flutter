@@ -379,7 +379,7 @@ class _HomePageState extends State<HomePage> {
   /// Creates version information widget
   Widget _buildVersionInfo() {
     return Text(
-      'Plugin 1.0.3',
+      'Plugin 2.0.0',
       style: TextStyle(fontSize: 12, color: Colors.white.withAlpha(77)),
     );
   }

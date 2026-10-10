@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.0
+
+- Updated Android and iOS native dependencies to Nosmai Effects SDK 3.0.6.
+- Improved beauty, makeup, and face-reshape rendering.
+- Added new built-in effects and beauty options.
+- Added face stickers with PNG, JPEG, and animated GIF support.
+- Added real-time hair colouring.
+- Improved camera performance, stability, and effect responsiveness.
+- Added Android `arm64-v8a` and `armeabi-v7a` support.
+- Standardized local-filter APIs and removed deprecated development-only APIs.
+
 ## 1.0.3
 
 - Updated Android and iOS native dependencies to Nosmai Effects SDK 3.0.5.

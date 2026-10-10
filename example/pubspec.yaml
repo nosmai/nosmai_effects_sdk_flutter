@@ -4,7 +4,7 @@ description: "Demonstrates how to use the nosmai_effects_sdk plugin."
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
-version: 1.0.3
+version: 2.0.0
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -56,6 +56,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/stickers/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

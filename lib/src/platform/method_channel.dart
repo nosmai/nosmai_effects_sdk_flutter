@@ -598,23 +598,6 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
   }
 
   @override
-  Future<List<dynamic>> getDebugFilters({NosmaiLocalFilterType? type}) async {
-    try {
-      final assetPaths = await _loadFlutterAssetPaths();
-      final result = await methodChannel.invokeMethod<List<dynamic>>(
-        'getDebugFilters',
-        {
-          'filterType': type?.value,
-          'assetPaths': assetPaths,
-        },
-      );
-      return result ?? [];
-    } catch (_) {
-      rethrow;
-    }
-  }
-
-  @override
   Future<List<dynamic>> getLocalEffects() async {
     try {
       final assetPaths = await _loadFlutterAssetPaths();
@@ -846,6 +829,63 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
       rethrow;
     }
   }
+
+  @override
+  Future<void> applyContourAndHighlighter(
+      {double contour = 0, double highlighter = 0}) async {
+    await methodChannel.invokeMethod<void>('applyContourHighlighter', {
+      'contour': _strength(contour, 2),
+      'highlighter': _strength(highlighter, 2)
+    });
+  }
+
+  @override
+  Future<void> applyFreckles(double quantity) async {
+    await methodChannel.invokeMethod<void>(
+        'applyFreckles', {'quantity': _strength(quantity, 1)});
+  }
+
+  @override
+  Future<void> applyFoundation(
+      {NosmaiFoundationShade shade = NosmaiFoundationShade.honey,
+      Color? color,
+      double coverage = 0.5}) async {
+    await methodChannel.invokeMethod<void>('applyFoundation',
+        {'coverage': _strength(coverage, 1), ..._rgb(color ?? shade.color)});
+  }
+
+  @override
+  Future<void> removeFoundation() async {
+    await methodChannel.invokeMethod<void>('removeFoundation');
+  }
+
+  @override
+  Future<bool> prepareBeautyFilters() async =>
+      await methodChannel.invokeMethod<bool>('prepareBeautyFilters') ?? false;
+
+  @override
+  Future<bool> isBeautyPrepared() async =>
+      await methodChannel.invokeMethod<bool>('isBeautyPrepared') ?? false;
+
+  @override
+  Future<void> setBeautyVisible(bool visible) async {
+    await methodChannel
+        .invokeMethod<void>('setBeautyVisible', {'visible': visible});
+  }
+
+  @override
+  Future<bool> isBeautyVisible() async {
+    return await methodChannel.invokeMethod<bool>('isBeautyVisible') ?? false;
+  }
+
+  double _strength(double value, double maximum) =>
+      value.isFinite ? value.clamp(0.0, maximum).toDouble() : 0.0;
+
+  Map<String, double> _rgb(Color color) => {
+        'r': color.r,
+        'g': color.g,
+        'b': color.b,
+      };
 
   @override
   Future<void> applySkinSmoothing(double level) async {
@@ -1207,17 +1247,90 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
     }
   }
 
+  // Face Sticker Methods
+
+  @override
+  Future<bool> setFaceSticker(
+    Uint8List imageData, {
+    NosmaiFaceStickerAnchor anchor = NosmaiFaceStickerAnchor.center,
+    double offsetX = 0.0,
+    double offsetY = 0.0,
+    double scale = 0.0,
+    double rotationDeg = 0.0,
+    double opacity = 1.0,
+  }) async {
+    try {
+      final result = await methodChannel.invokeMethod<bool>('setFaceSticker', {
+        'imageData': imageData,
+        'anchor': anchor.value,
+        'offsetX': offsetX,
+        'offsetY': offsetY,
+        'scale': scale,
+        'rotationDeg': rotationDeg,
+        'opacity': opacity,
+      });
+      return result ?? false;
+    } catch (_) {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> setFaceStickerPlacement({
+    required NosmaiFaceStickerAnchor anchor,
+    double offsetX = 0.0,
+    double offsetY = 0.0,
+    double scale = 0.0,
+    double rotationDeg = 0.0,
+    double opacity = 1.0,
+  }) async {
+    try {
+      await methodChannel.invokeMethod('setFaceStickerPlacement', {
+        'anchor': anchor.value,
+        'offsetX': offsetX,
+        'offsetY': offsetY,
+        'scale': scale,
+        'rotationDeg': rotationDeg,
+        'opacity': opacity,
+      });
+    } catch (_) {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> clearFaceSticker() async {
+    try {
+      await methodChannel.invokeMethod('clearFaceSticker');
+    } catch (_) {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<bool> isFaceStickerActive() async {
+    try {
+      final result =
+          await methodChannel.invokeMethod<bool>('isFaceStickerActive');
+      return result ?? false;
+    } catch (_) {
+      rethrow;
+    }
+  }
+
   // Lipstick Methods
 
   @override
   Future<bool> applyLipstick({
     required NosmaiLipstickStyle style,
     double intensity = 0.5,
+    Color? color,
   }) async {
     try {
       final result = await methodChannel.invokeMethod<bool>('applyLipstick', {
         'style': style.value,
-        'intensity': intensity,
+        'intensity': _strength(intensity, 2.0),
+        if (color != null) ..._rgb(color),
       });
       return result ?? false;
     } catch (_) {
@@ -1229,7 +1342,7 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
   Future<void> setLipstickIntensity(double intensity) async {
     try {
       await methodChannel.invokeMethod('setLipstickIntensity', {
-        'intensity': intensity,
+        'intensity': _strength(intensity, 2.0),
       });
     } catch (e) {
       rethrow;
@@ -1275,11 +1388,13 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
   Future<bool> applyEyeshadow({
     required NosmaiEyeshadowStyle style,
     double intensity = 0.5,
+    Color? color,
   }) async {
     try {
       final result = await methodChannel.invokeMethod<bool>('applyEyeshadow', {
         'style': style.value,
-        'intensity': intensity,
+        'intensity': _strength(intensity, 1.0),
+        if (color != null) ..._rgb(color),
       });
       return result ?? false;
     } catch (_) {
@@ -1323,11 +1438,13 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
   Future<bool> applyBlusher({
     required NosmaiBlusherStyle style,
     double intensity = 0.5,
+    Color? color,
   }) async {
     try {
       final result = await methodChannel.invokeMethod<bool>('applyBlusher', {
         'style': style.value,
-        'intensity': intensity,
+        'intensity': _strength(intensity, 2.0),
+        if (color != null) ..._rgb(color),
       });
       return result ?? false;
     } catch (_) {
@@ -1339,7 +1456,7 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
   Future<void> setBlusherIntensity(double intensity) async {
     try {
       await methodChannel.invokeMethod('setBlusherIntensity', {
-        'intensity': intensity,
+        'intensity': _strength(intensity, 2.0),
       });
     } catch (e) {
       rethrow;
@@ -1419,11 +1536,13 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
   Future<bool> applyEyebrow({
     required NosmaiEyebrowStyle style,
     double intensity = 0.5,
+    Color? color,
   }) async {
     try {
       final result = await methodChannel.invokeMethod<bool>('applyEyebrow', {
         'style': style.value,
-        'intensity': intensity,
+        'intensity': _strength(intensity, 1.0),
+        if (color != null) ..._rgb(color),
       });
       return result ?? false;
     } catch (_) {
@@ -1558,6 +1677,59 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
     try {
       await methodChannel.invokeMethod('removeEyeColoring');
     } catch (e) {
+      rethrow;
+    }
+  }
+
+  // Hair Coloring Methods
+
+  @override
+  Future<bool> setHairColor({
+    required double r,
+    required double g,
+    required double b,
+    double intensity = 0.6,
+  }) async {
+    try {
+      final result = await methodChannel.invokeMethod<bool>('setHairColor', {
+        'r': r,
+        'g': g,
+        'b': b,
+        'intensity': intensity,
+      });
+      return result ?? false;
+    } catch (_) {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> setHairColorIntensity(double intensity) async {
+    try {
+      await methodChannel.invokeMethod('setHairColorIntensity', {
+        'intensity': intensity,
+      });
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> removeHairColoring() async {
+    try {
+      await methodChannel.invokeMethod('removeHairColoring');
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<bool> isHairColoringActive() async {
+    try {
+      final result =
+          await methodChannel.invokeMethod<bool>('isHairColoringActive');
+      return result ?? false;
+    } catch (_) {
       rethrow;
     }
   }

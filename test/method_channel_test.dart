@@ -221,7 +221,8 @@ void main() {
     );
   });
 
-  test('cloud model keeps backend id but exposes downloadable filter id', () {
+  test('cloud model exposes the downloadable filter id, not the record uuid',
+      () {
     final filter = NosmaiFilter.fromMap({
       'id': 'backend-record-uuid',
       'filterId': 'special-effects_void_eyes_2039',
@@ -232,8 +233,25 @@ void main() {
 
     expect(filter.id, 'special-effects_void_eyes_2039');
     expect(filter.filterId, 'special-effects_void_eyes_2039');
-    expect(filter.backendId, 'backend-record-uuid');
     expect(filter.cloudIdentifier, 'special-effects_void_eyes_2039');
+    expect(filter.toMap().containsKey('backendId'), isFalse);
+  });
+
+  test(
+      'a filter map without filterId keeps its id instead of falling back to '
+      'the name', () {
+    // Local filters carry an id but no filterId; that id must survive,
+    // otherwise every identifier would collapse to the display name.
+    final filter = NosmaiFilter.fromMap({
+      'id': 'glitter_face',
+      'name': 'Glitter Face',
+      'type': 'local',
+      'filterType': 'effect',
+    });
+
+    expect(filter.id, 'glitter_face');
+    expect(filter.filterId, isNull);
+    expect(filter.cloudIdentifier, 'glitter_face');
   });
 
   test('applyEffect propagates native apply failures', () async {
@@ -282,5 +300,136 @@ void main() {
     expect(parameter.options, ['natural', 'soft']);
     expect(parameter.minValue, 0.0);
     expect(parameter.maxValue, 1.0);
+  });
+
+  test('face sticker sends encoded bytes and the native anchor ordinal',
+      () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return true;
+    });
+
+    // "GIF89a": the bytes travel untouched so an animated GIF keeps its frames.
+    final bytes = Uint8List.fromList(<int>[0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
+
+    await expectLater(
+      platform.setFaceSticker(
+        bytes,
+        anchor: NosmaiFaceStickerAnchor.forehead,
+        offsetY: 0.05,
+        scale: 0.6,
+      ),
+      completion(isTrue),
+    );
+
+    expect(calls.single.method, 'setFaceSticker');
+    expect(calls.single.arguments['imageData'], bytes);
+    expect(calls.single.arguments['anchor'], 1);
+    expect(calls.single.arguments['offsetX'], 0.0);
+    expect(calls.single.arguments['offsetY'], 0.05);
+    expect(calls.single.arguments['scale'], 0.6);
+    expect(calls.single.arguments['rotationDeg'], 0.0);
+    expect(calls.single.arguments['opacity'], 1.0);
+  });
+
+  test('face sticker anchors keep stable cross-platform ids', () {
+    expect(
+      NosmaiFaceStickerAnchor.values.map((anchor) => anchor.value),
+      orderedEquals(List<int>.generate(9, (index) => index)),
+    );
+    expect(NosmaiFaceStickerAnchor.fromValue(5), NosmaiFaceStickerAnchor.eyes);
+    expect(
+      NosmaiFaceStickerAnchor.fromValue(99),
+      NosmaiFaceStickerAnchor.center,
+    );
+  });
+
+  test('face sticker placement and clear use the expected channel calls',
+      () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+
+    await platform.setFaceStickerPlacement(
+      anchor: NosmaiFaceStickerAnchor.nose,
+      offsetY: 0.05,
+      scale: 0.4,
+    );
+    await platform.clearFaceSticker();
+
+    expect(calls[0].method, 'setFaceStickerPlacement');
+    expect(calls[0].arguments['anchor'], 6);
+    expect(calls[0].arguments['offsetY'], 0.05);
+    expect(calls[0].arguments['scale'], 0.4);
+    expect(calls[1].method, 'clearFaceSticker');
+    expect(calls[1].arguments, isNull);
+  });
+
+  test('active effects report a sticker-owned AR slot', () {
+    final state = NosmaiActiveEffects.fromMap({
+      'mode': 1,
+      'modeName': 'effectsFilters',
+      'activeEffectPath': null,
+      'isFaceStickerActive': true,
+      'hasBackground': false,
+      'backgroundSourceName': 'none',
+    });
+
+    expect(state.hasFaceSticker, isTrue);
+    expect(state.hasArPackage, isFalse);
+    expect(state.isArSlotOccupied, isTrue);
+    expect(state.toMap()['isFaceStickerActive'], isTrue);
+    expect(NosmaiActiveEffects.idle().hasFaceSticker, isFalse);
+  });
+
+  test('hair color enables with normalized rgb and intensity', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return call.method == 'setHairColor' ? true : null;
+    });
+
+    final enabled = await platform.setHairColor(
+      r: 0.7,
+      g: 0.35,
+      b: 0.2,
+      intensity: 0.6,
+    );
+    await platform.setHairColorIntensity(0.8);
+    await platform.removeHairColoring();
+
+    expect(enabled, isTrue);
+    expect(calls[0].method, 'setHairColor');
+    expect(calls[0].arguments['r'], 0.7);
+    expect(calls[0].arguments['g'], 0.35);
+    expect(calls[0].arguments['b'], 0.2);
+    expect(calls[0].arguments['intensity'], 0.6);
+    expect(calls[1].method, 'setHairColorIntensity');
+    expect(calls[1].arguments['intensity'], 0.8);
+    expect(calls[2].method, 'removeHairColoring');
+    expect(calls[2].arguments, isNull);
+  });
+
+  test('active effects report hair coloring as built-in beauty', () async {
+    final effects = NosmaiActiveEffects.fromMap({
+      'mode': 0,
+      'modeName': 'idle',
+      'hasBackground': false,
+      'backgroundSource': 0,
+      'backgroundSourceName': 'none',
+      'hasBeautyEffect': false,
+      'hasBuiltInBeauty': true,
+      'hasManualBackground': false,
+      'isHairColoringActive': true,
+    });
+
+    expect(effects.hasHairColoring, isTrue);
+    expect(effects.hasArPackage, isFalse);
+    expect(effects.isArSlotOccupied, isFalse);
+    expect(effects.toMap()['isHairColoringActive'], isTrue);
+    expect(NosmaiActiveEffects.idle().hasHairColoring, isFalse);
   });
 }

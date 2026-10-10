@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:nosmai_effects_sdk/nosmai_effects_sdk.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -33,6 +36,18 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
   bool _exitInProgress = false;
   bool _allowRoutePop = false;
 
+  // ── Face sticker sheet state. Lives on the parent State so it survives sheet
+  //    close/reopen; the sticker itself lives in the native engine. A source is
+  //    either an emoji glyph (rasterised to PNG bytes here) or a bundled asset
+  //    (the animated GIF, sent through setFaceStickerAsset).
+  static const String _stickerGifAsset = 'assets/stickers/heart_star.gif';
+  static const List<String> _stickerEmoji = ['😎', '💩'];
+  String? _activeSticker;
+  NosmaiFaceStickerAnchor _stickerAnchor = NosmaiFaceStickerAnchor.center;
+  double _stickerScale = NosmaiFaceStickerAnchor.center.defaultScale;
+  double _stickerOffsetY = 0.0;
+  final Map<String, Uint8List> _stickerBytesCache = {};
+
   // UI Controllers
   late AnimationController _recordButtonController;
 
@@ -60,6 +75,20 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
   // Teeth
   double _bTeeth = 0.0; // 0..1
 
+  // Hair colour (built-in, segmentation driven)
+  double _bHairIntensity = 0.0; // 0..1, 0 = off
+  int _bHairShade = -1;
+  static const List<Color> _hairShades = [
+    Color(0xFFB35933), // auburn
+    Color(0xFFE6C882), // blonde
+    Color(0xFF784628), // chestnut
+    Color(0xFF191618), // black
+    Color(0xFFC82828), // red
+    Color(0xFF3C5ADC), // blue
+    Color(0xFF8C46C8), // violet
+    Color(0xFFF06EAA), // pink
+  ];
+
   // Beauty category labels + icons (first 5 are makeup with variant chips).
   static const List<String> _beautyCats = [
     'Lipstick',
@@ -71,6 +100,7 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
     'Adjust',
     'Color',
     'Teeth',
+    'Hair',
   ];
   static const List<String> _beautyCatIcons = [
     'L',
@@ -82,6 +112,7 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
     'A',
     'C',
     'T',
+    'H',
   ];
   // Variant labels — order matches the style enum ordinals (0,1,2).
   static const List<List<String>> _makeupVariants = [
@@ -137,7 +168,24 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
       _bGreen = 1.0;
       _bBlue = 1.0;
       _bTeeth = 0.0;
+      _bHairIntensity = 0.0;
+      _bHairShade = -1;
     });
+  }
+
+  /// Push the hair sheet state to the engine: a shade + intensity enables
+  /// hair colouring; intensity 0 (or no shade) removes it.
+  Future<void> _applyHair() async {
+    try {
+      if (_bHairIntensity <= 0 || _bHairShade < 0) {
+        await _nosmai.removeHairColoring();
+      } else {
+        await _nosmai.setHairColor(_hairShades[_bHairShade],
+            intensity: _bHairIntensity);
+      }
+    } catch (e) {
+      debugPrint('Hair colour error: $e');
+    }
   }
 
   Future<void> _toggleRecording() async {
@@ -654,6 +702,13 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
                                   onTap: _openBeautySheet,
                                   size: 20,
                                 ),
+
+                                // Face sticker (image or animated GIF)
+                                _buildActionButton(
+                                  icon: Icons.emoji_emotions_outlined,
+                                  onTap: _openStickerSheet,
+                                  size: 20,
+                                ),
                               ],
                             ),
                           ),
@@ -759,6 +814,281 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
         ),
         child: Icon(icon, color: Colors.white, size: size),
       ),
+    );
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Face sticker sheet. The sticker shares the AR slot with .nosmai effects, so
+  // applying one replaces an active effect (and clears built-in beauty), and an
+  // effect applied later replaces the sticker. Placement changes are cheap and
+  // never re-decode the image, so the sliders push them live.
+  // ───────────────────────────────────────────────────────────────────────────
+  Future<void> _openStickerSheet() async {
+    // The engine is the source of truth: an effect applied from another sheet
+    // may have replaced the sticker since this sheet was last open.
+    if (!await _nosmai.isFaceStickerActive()) {
+      _activeSticker = null;
+    }
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF151515),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => StatefulBuilder(
+        builder: (_, setSheet) => _buildStickerSheet(setSheet),
+      ),
+    );
+  }
+
+  /// PNG bytes for an emoji glyph: any widget can become a sticker this way.
+  Future<Uint8List> _emojiStickerBytes(String glyph) async {
+    final cached = _stickerBytesCache[glyph];
+    if (cached != null) return cached;
+    const size = 256.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final painter = TextPainter(
+      text: TextSpan(text: glyph, style: const TextStyle(fontSize: 200)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    painter.paint(
+      canvas,
+      Offset((size - painter.width) / 2, (size - painter.height) / 2),
+    );
+    final image =
+        await recorder.endRecording().toImage(size.toInt(), size.toInt());
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    final bytes = data!.buffer.asUint8List();
+    _stickerBytesCache[glyph] = bytes;
+    return bytes;
+  }
+
+  Future<void> _applySticker(String source, StateSetter setSheet) async {
+    try {
+      final bool applied;
+      if (source == _stickerGifAsset) {
+        // A GIF goes in as its raw bytes; the SDK animates it on the face.
+        applied = await _nosmai.setFaceStickerAsset(
+          source,
+          anchor: _stickerAnchor,
+          offsetY: _stickerOffsetY,
+          scale: _stickerScale,
+        );
+      } else {
+        applied = await _nosmai.setFaceSticker(
+          await _emojiStickerBytes(source),
+          anchor: _stickerAnchor,
+          offsetY: _stickerOffsetY,
+          scale: _stickerScale,
+        );
+      }
+      if (!applied) {
+        _showErrorMessage('Could not apply the sticker');
+        return;
+      }
+      setSheet(() => _activeSticker = source);
+    } catch (e) {
+      _showErrorMessage('Sticker failed: $e');
+    }
+  }
+
+  Future<void> _pushStickerPlacement() async {
+    if (_activeSticker == null) return;
+    await _nosmai.setFaceStickerPlacement(
+      anchor: _stickerAnchor,
+      offsetY: _stickerOffsetY,
+      scale: _stickerScale,
+    );
+  }
+
+  Future<void> _clearSticker(StateSetter setSheet) async {
+    await _nosmai.clearFaceSticker();
+    setSheet(() => _activeSticker = null);
+  }
+
+  Widget _buildStickerSheet(StateSetter setSheet) {
+    final media = MediaQuery.of(context);
+    final sources = [..._stickerEmoji, _stickerGifAsset];
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 10,
+          bottom: 16 + media.viewInsets.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 5,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(85),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            ),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Sticker',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (_activeSticker != null)
+                  TextButton(
+                    onPressed: () => _clearSticker(setSheet),
+                    child: const Text(
+                      'Remove',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // Sources: two emoji + the animated GIF.
+            Row(
+              children: sources.map((source) {
+                final selected = source == _activeSticker;
+                final isGif = source == _stickerGifAsset;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: GestureDetector(
+                    onTap: () => _applySticker(source, setSheet),
+                    child: Container(
+                      width: 58,
+                      height: 58,
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? Colors.white.withAlpha(46)
+                            : Colors.white.withAlpha(16),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: selected ? Colors.white : Colors.white24,
+                          width: selected ? 2 : 1,
+                        ),
+                      ),
+                      child: Center(
+                        child: isGif
+                            ? Padding(
+                                padding: const EdgeInsets.all(9),
+                                child: Image.asset(source, fit: BoxFit.contain),
+                              )
+                            : Text(source,
+                                style: const TextStyle(fontSize: 28)),
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+
+            // Options only once a sticker is on the face.
+            if (_activeSticker != null) ...[
+              const SizedBox(height: 16),
+              const Text('Anchor',
+                  style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: NosmaiFaceStickerAnchor.values.map((anchor) {
+                  final selected = anchor == _stickerAnchor;
+                  return ChoiceChip(
+                    label: Text(anchor.name),
+                    selected: selected,
+                    selectedColor: Colors.white,
+                    backgroundColor: Colors.white.withAlpha(20),
+                    labelStyle: TextStyle(
+                      color: selected ? Colors.black : Colors.white,
+                      fontSize: 12,
+                    ),
+                    onSelected: (_) {
+                      // Switching anchor restores that anchor's own placement:
+                      // the offset is measured from the anchor.
+                      setSheet(() {
+                        _stickerAnchor = anchor;
+                        _stickerScale = anchor.defaultScale;
+                        _stickerOffsetY = 0.0;
+                      });
+                      _pushStickerPlacement();
+                    },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 12),
+              _stickerSlider(
+                label: 'Size',
+                value: _stickerScale,
+                min: 0.1,
+                max: 1.5,
+                onChanged: (v) {
+                  setSheet(() => _stickerScale = v);
+                  _pushStickerPlacement();
+                },
+              ),
+              _stickerSlider(
+                label: 'Up / down',
+                value: _stickerOffsetY,
+                min: -0.5,
+                max: 0.5,
+                onChanged: (v) {
+                  setSheet(() => _stickerOffsetY = v);
+                  _pushStickerPlacement();
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _stickerSlider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 82,
+          child: Text(label,
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
+        ),
+        Expanded(
+          child: Slider(
+            value: value.clamp(min, max),
+            min: min,
+            max: max,
+            activeColor: Colors.white,
+            inactiveColor: Colors.white24,
+            onChanged: onChanged,
+          ),
+        ),
+        SizedBox(
+          width: 44,
+          child: Text(value.toStringAsFixed(2),
+              textAlign: TextAlign.right,
+              style: const TextStyle(color: Colors.white54, fontSize: 12)),
+        ),
+      ],
     );
   }
 
@@ -1064,6 +1394,58 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
             ),
           ],
         );
+      case 9: // Hair
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (int i = 0; i < _hairShades.length; i++)
+                    GestureDetector(
+                      onTap: () async {
+                        _bHairShade = i;
+                        if (_bHairIntensity <= 0) _bHairIntensity = 0.6;
+                        await _applyHair();
+                        setSheet(() {});
+                      },
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: _hairShades[i],
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: _bHairShade == i
+                                ? Colors.white
+                                : Colors.white.withAlpha(60),
+                            width: _bHairShade == i ? 3 : 1,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            _beautySlider('Intensity', _bHairIntensity, 0, 1, (v) {
+              _bHairIntensity = v;
+              if (_bHairShade < 0) _bHairShade = 0;
+              _applyHair();
+            }, setSheet),
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'Hair segmentation runs on its own thread — the first '
+                'coloured frame appears once the model has warmed up.',
+                style:
+                    TextStyle(color: Colors.white.withAlpha(140), fontSize: 11),
+              ),
+            ),
+          ],
+        );
     }
     return const SizedBox.shrink();
   }
@@ -1185,6 +1567,8 @@ class _UnifiedCameraScreenState extends State<UnifiedCameraScreen>
             _bBlue != 1;
       case 8:
         return _bTeeth > 0;
+      case 9:
+        return _bHairIntensity > 0;
       default:
         return i < 5 && _makeupVariant[i] != -1;
     }

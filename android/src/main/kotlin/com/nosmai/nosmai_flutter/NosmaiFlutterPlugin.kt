@@ -76,6 +76,10 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
     private var activity: Activity? = null
     private var activityBinding: ActivityPluginBinding? = null
     private var pendingLicenseKey: String? = null
+    @Volatile private var beautyPreparationGeneration = 0L
+    private var beautyPrepared = false
+    private var beautyPreparing = false
+    private val beautyPreparationWaiters = mutableListOf<Result>()
     private var isSdkInitialized = false
 
     private var textureEntry: TextureRegistry.SurfaceTextureEntry? = null
@@ -421,6 +425,8 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "applySkinSmoothing",
             "applySkinWhitening",
             "applyContourHighlighter",
+            "applyFreckles",
+            "applyFoundation",
             "applyDarkCircleCorrector",
             "applyFaceSlimming",
             "applyEyeEnlargement",
@@ -449,9 +455,12 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "setReshape",
             "setEyeColor",
             "setEyeColorIntensity",
+            "setHairColor",
+            "setHairColorIntensity",
             "resetHSBFilter",
             "adjustHSB",
-            "applyWhiteBalance"
+            "applyWhiteBalance",
+            "setFaceSticker"
         )
 
         /**
@@ -683,6 +692,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
     }
 
     override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
+        invalidateBeautyPreparation()
         isEngineAttached = false
         localFilterCatalogGeneration++
         setGameEventsEnabled(false)
@@ -760,7 +770,10 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "getCurrentRecordingDuration" -> result.success(getCurrentRecordingDurationSeconds())
             "applySkinSmoothing" -> handleApplySkinSmoothing(call, result)
             "applySkinWhitening" -> handleApplySkinWhitening(call, result)
-            "applyContourHighlighter" -> handleApplyContourHighlighter(call, result)
+            "applyContourHighlighter" -> if (call.argument<Number>("contour") != null || call.argument<Number>("highlighter") != null) handleBeautyControls(call, result) else handleApplyContourHighlighter(call, result)
+            "applyFreckles", "applyFoundation", "removeFoundation", "setBeautyVisible", "isBeautyVisible" -> handleBeautyControls(call, result)
+            "prepareBeautyFilters" -> handlePrepareBeautyFilters(result)
+            "isBeautyPrepared" -> result.success(isSdkInitialized && isProcessingActive && beautyPrepared && NosmaiSDK.isPipelineReadyFlag())
             "applyDarkCircleCorrector" -> handleApplyDarkCircleCorrector(call, result)
             "applyFaceSlimming" -> handleApplyFaceSlimming(call, result)
             "applyEyeEnlargement" -> handleApplyEyeEnlargement(call, result)
@@ -802,6 +815,10 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "setEyeColor" -> handleSetEyeColor(call, result)
             "setEyeColorIntensity" -> handleSetEyeColorIntensity(call, result)
             "removeEyeColoring" -> handleRemoveEyeColoring(result)
+            "setHairColor" -> handleSetHairColor(call, result)
+            "setHairColorIntensity" -> handleSetHairColorIntensity(call, result)
+            "removeHairColoring" -> handleRemoveHairColoring(result)
+            "isHairColoringActive" -> handleIsHairColoringActive(result)
             "removeAllMakeup" -> handleRemoveAllMakeup(result)
             "removeAllBeautyEffects" -> handleRemoveAllBeautyEffects(result)
             "resetHSBFilter" -> handleResetHSBFilter(result)
@@ -823,7 +840,6 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "clearFilterCache" -> handleClearFilterCache(result)
             "clearLocalFiltersCache" -> handleClearFilterCache(result)
             "getAllLocalFilters" -> handleGetAllLocalFilters(call, result)
-            "getDebugFilters" -> handleGetDebugFilters(call, result)
             "validateLocalFilters" -> handleValidateLocalFilters(call, result)
             "reinitializePreview" -> handleReinitializePreview(result)
             "getEffectParameters" -> handleGetEffectParameters(result)
@@ -833,6 +849,10 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "isAdvancedFiltersEnabled" -> result.success(true)
             "setBackgroundSegmentation" -> handleSetBackgroundSegmentation(call, result)
             "clearBackgroundSegmentation" -> handleClearBackgroundSegmentation(result)
+            "setFaceSticker" -> handleSetFaceSticker(call, result)
+            "setFaceStickerPlacement" -> handleSetFaceStickerPlacement(call, result)
+            "clearFaceSticker" -> handleClearFaceSticker(result)
+            "isFaceStickerActive" -> handleIsFaceStickerActive(result)
             else -> result.notImplemented()
         }
     }
@@ -961,7 +981,9 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
                 "hasManualBackground" to false,
                 "hasManualBackgroundConfig" to false,
                 "activeFilterInfo" to null,
-                "activeEffectInfo" to null
+                "activeEffectInfo" to null,
+                "isFaceStickerActive" to false,
+                "isHairColoringActive" to false
             )
         }
 
@@ -998,7 +1020,11 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "hasManualBackground" to (state.activeBackgroundConfig != null),
             "hasManualBackgroundConfig" to (state.activeBackgroundConfig != null),
             "activeFilterInfo" to activeFilterInfo,
-            "activeEffectInfo" to activeEffectInfo
+            "activeEffectInfo" to activeEffectInfo,
+            // A sticker occupies the AR slot while activeEffectPath stays null,
+            // so the slot cannot be judged from the path alone.
+            "isFaceStickerActive" to faceStickerActive(),
+            "isHairColoringActive" to hairColoringActive()
         )
     }
 
@@ -1137,22 +1163,6 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
                 grouped.getOrPut(type) { mutableListOf() }.add(filter)
             }
             grouped
-        }
-    }
-
-    private fun handleGetDebugFilters(call: MethodCall, result: Result) {
-        val assetPaths = updateFlutterAssetPaths(call)
-        val requestedType = call.argument<String>("filterType")
-            ?: call.argument<String>("type")
-        val normalizedType = requestedType
-            ?.takeIf { it.isNotBlank() && !it.equals("all", ignoreCase = true) }
-            ?.let(::normalizeFilterType)
-        runLocalFilterCatalogTask(result, "DEBUG_FILTER_LOAD_ERROR", "getDebugFilters") {
-            getNosmaiFilters(assetPaths).filter { filter ->
-                filter["debug"] == true &&
-                    (normalizedType == null ||
-                        normalizeFilterType(filter["filterType"]?.toString()) == normalizedType)
-            }
         }
     }
 
@@ -1517,6 +1527,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
     }
 
     private fun handleStopProcessing(result: Result) {
+        invalidateBeautyPreparation()
         try {
             cleanupInProgress = true
             lastCleanupAtMs = System.currentTimeMillis()
@@ -1645,6 +1656,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
     }
 
     private fun handleDetachCameraView(result: Result) {
+        invalidateBeautyPreparation()
         try {
             try { camera2Helper?.cancelRetry() } catch (_: Throwable) {}
             stopCameraHelper(true)
@@ -1662,6 +1674,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
     }
 
     private fun handleEndCameraSession(result: Result) {
+        invalidateBeautyPreparation()
         if (cameraSessionEnding) {
             result.success(false)
             return
@@ -1931,7 +1944,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
                         "filter" -> state.activeFilterPath.isNullOrBlank()
                         "background" -> state.activeBackgroundPackagePath.isNullOrBlank()
                         "beauty_effect", "effect", "game" ->
-                            state.activeEffectPath.isNullOrBlank()
+                            state.activeEffectPath.isNullOrBlank() && !faceStickerActive()
                         else -> !NosmaiEffectsEngine.hasActiveEffect()
                     }
                     if (cleared) {
@@ -2185,6 +2198,110 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
         }
     }
 
+    private fun normalizedRange(value: Number?, minimum: Double, maximum: Double, fallback: Double = 0.0): Float {
+        val raw = value?.toDouble() ?: fallback
+        return (if (raw.isFinite()) raw else 0.0).coerceIn(minimum, maximum).toFloat()
+    }
+
+    private fun makeupRgb(call: MethodCall, defaults: FloatArray): FloatArray =
+        floatArrayOf(normalizedUnit(call.argument<Number>("r"), defaults[0].toDouble()),
+            normalizedUnit(call.argument<Number>("g"), defaults[1].toDouble()),
+            normalizedUnit(call.argument<Number>("b"), defaults[2].toDouble()))
+
+    private fun hasMakeupRgb(call: MethodCall): Boolean =
+        call.argument<Number>("r") != null || call.argument<Number>("g") != null || call.argument<Number>("b") != null
+
+    // These fields and Flutter results are owned by the main thread.
+    private fun invalidateBeautyPreparation() {
+        beautyPreparationGeneration++
+        beautyPrepared = false
+        beautyPreparing = false
+        val waiting = beautyPreparationWaiters.toList()
+        beautyPreparationWaiters.clear()
+        waiting.forEach { it.success(false) }
+    }
+
+    private fun finishBeautyPreparation(generation: Long, prepared: Boolean, error: Throwable? = null) {
+        if (generation != beautyPreparationGeneration) return
+        beautyPreparing = false
+        beautyPrepared = prepared && error == null
+        val waiting = beautyPreparationWaiters.toList()
+        beautyPreparationWaiters.clear()
+        val code = when (error) {
+            is LinkageError -> "SDK_UPGRADE_REQUIRED"
+            is IllegalStateException -> if (error.message?.contains("license", ignoreCase = true) == true) "INVALID_LICENSE" else "FILTER_ERROR"
+            else -> "FILTER_ERROR"
+        }
+        waiting.forEach {
+            if (error == null) it.success(beautyPrepared)
+            else it.error(code, error.message, null)
+        }
+    }
+
+    private fun handlePrepareBeautyFilters(result: Result) {
+        if (!requireSdkReady(result)) return
+        if (!isProcessingActive || !NosmaiSDK.isPipelineReadyFlag()) {
+            result.success(false)
+            return
+        }
+        if (beautyPrepared) {
+            result.success(true)
+            return
+        }
+        beautyPreparationWaiters.add(result)
+        if (beautyPreparing) return
+        beautyPreparing = true
+        val generation = beautyPreparationGeneration
+        try {
+            backgroundExecutor.execute {
+                if (generation != beautyPreparationGeneration) return@execute
+                try {
+                    // Same blocking native renderer preparation as demo/research.
+                    val rendererReady = com.nosmai.effect.internal.NosmaiFilterEngine.warmUpMakeup()
+                    val modelsSettled = generation == beautyPreparationGeneration &&
+                        NosmaiSDK.isPipelineReadyFlag() && NosmaiBeauty.prepareBeautyModels()
+                    runOnMain { finishBeautyPreparation(generation, rendererReady && modelsSettled) }
+                } catch (error: Throwable) {
+                    runOnMain { finishBeautyPreparation(generation, false, error) }
+                }
+            }
+        } catch (error: Throwable) {
+            finishBeautyPreparation(generation, false, error)
+        }
+    }
+
+    private fun handleBeautyControls(call: MethodCall, result: Result) {
+        if (!requireSdkReady(result)) return
+        try {
+            var response: Any? = null
+            when (call.method) {
+                "applyContourHighlighter" -> NosmaiBeauty.applyContourHighlighter(
+                    normalizedRange(call.argument<Number>("contour"), 0.0, 2.0),
+                    normalizedRange(call.argument<Number>("highlighter"), 0.0, 2.0))
+                "applyFreckles" -> NosmaiBeauty.applyFreckles(normalizedUnit(call.argument<Number>("quantity"), 0.0))
+                "applyFoundation" -> {
+                    val rgb = makeupRgb(call, floatArrayOf(.76f, .57f, .43f))
+                    NosmaiBeauty.applyFoundation(normalizedUnit(call.argument<Number>("coverage"), 0.0), rgb[0], rgb[1], rgb[2])
+                }
+                "removeFoundation" -> NosmaiBeauty.removeFoundation()
+                "applyDarkCircleCorrector" -> NosmaiBeauty.applyDarkCircleCorrector(normalizedUnit(call.argument<Number>("intensity"), 0.0))
+                "setBeautyVisible" -> NosmaiBeauty.setBeautyVisible(call.argument<Boolean>("visible") ?: true)
+                "isBeautyVisible" -> response = NosmaiBeauty.isBeautyVisible()
+
+            }
+            result.success(response)
+        } catch (error: IllegalArgumentException) {
+            result.error("INVALID_ARGUMENTS", error.message, null)
+        } catch (error: IllegalStateException) {
+            val code = if (error.message?.contains("license", ignoreCase = true) == true) "INVALID_LICENSE" else "FILTER_ERROR"
+            result.error(code, error.message, null)
+        } catch (error: LinkageError) {
+            result.error("SDK_UPGRADE_REQUIRED", "Use a native SDK built from the current beauty SDK source.", call.method)
+        } catch (error: Throwable) {
+            result.error("FILTER_ERROR", error.message, null)
+        }
+    }
+
     private fun normalizedUnit(value: Number?, defaultValue: Double = 0.5): Float {
         val raw = value?.toDouble() ?: defaultValue
         if (!raw.isFinite()) return defaultValue.coerceIn(0.0, 1.0).toFloat()
@@ -2356,9 +2473,12 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             if (!requireSdkReady(result)) return
 
             val style = call.argument<Number>("style")?.toInt() ?: NosmaiBeauty.LIPSTICK_MATTE
-            val intensity = normalizedUnit(call.argument<Number>("intensity"), 0.5)
+            val intensity = normalizedRange(call.argument<Number>("intensity"), 0.0, 2.0, 0.5)
 
-            NosmaiBeauty.applyLipstickStyle(style, 0.72f, 0.08f, 0.12f)
+            if (hasMakeupRgb(call)) {
+                val rgb = makeupRgb(call, floatArrayOf(.76f, .055f, .075f))
+                NosmaiBeauty.applyLipstickStyle(style, rgb[0], rgb[1], rgb[2])
+            } else NosmaiBeauty.applyLipstickStyle(style)
             NosmaiBeauty.setMakeupIntensity(NosmaiBeauty.MAKEUP_LIPSTICK, intensity)
 
             result.success(true)
@@ -2383,7 +2503,9 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             val style = call.argument<Number>("style")?.toInt() ?: NosmaiBeauty.EYESHADOW_NATURAL
             val intensity = normalizedUnit(call.argument<Number>("intensity"), 0.5)
 
-            NosmaiBeauty.applyEyeshadowStyle(style, 0.42f, 0.30f, 0.48f)
+            val defaults = arrayOf(floatArrayOf(43f/255f, 28f/255f, 15f/255f), floatArrayOf(.65f,.45f,.25f), floatArrayOf(.38f,.30f,.25f))
+            val rgb = makeupRgb(call, defaults[style.coerceIn(0, 2)])
+            NosmaiBeauty.applyEyeshadowStyle(style, rgb[0], rgb[1], rgb[2])
             NosmaiBeauty.setMakeupIntensity(NosmaiBeauty.MAKEUP_EYESHADOW, intensity)
 
             result.success(true)
@@ -2398,9 +2520,11 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             if (!requireSdkReady(result)) return
 
             val style = call.argument<Number>("style")?.toInt() ?: NosmaiBeauty.BLUSHER_NATURAL
-            val intensity = normalizedUnit(call.argument<Number>("intensity"), 0.5)
+            val intensity = normalizedRange(call.argument<Number>("intensity"), 0.0, 2.0, 0.5)
 
-            NosmaiBeauty.applyBlusherStyle(style, 0.95f, 0.38f, 0.42f)
+            val defaults = arrayOf(floatArrayOf(1f,169f/255f,153f/255f), floatArrayOf(157f/255f,63f/255f,37f/255f), floatArrayOf(198f/255f,114f/255f,124f/255f))
+            val rgb = makeupRgb(call, defaults[style.coerceIn(0, 2)])
+            NosmaiBeauty.applyBlusherStyle(style, rgb[0], rgb[1], rgb[2])
             NosmaiBeauty.setMakeupIntensity(NosmaiBeauty.MAKEUP_BLUSHER, intensity)
 
             result.success(true)
@@ -2434,7 +2558,9 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             val style = call.argument<Number>("style")?.toInt() ?: 0
             val intensity = normalizedUnit(call.argument<Number>("intensity"), 0.5)
 
-            NosmaiBeauty.applyEyebrowStyle(style, 0.16f, 0.11f, 0.08f)
+            val defaults = arrayOf(floatArrayOf(.35f,.25f,.20f), floatArrayOf(.20f,.15f,.12f), floatArrayOf(.30f,.20f,.15f))
+            val rgb = makeupRgb(call, defaults[style.coerceIn(0, 2)])
+            NosmaiBeauty.applyEyebrowStyle(style, rgb[0], rgb[1], rgb[2])
             NosmaiBeauty.setMakeupIntensity(NosmaiBeauty.MAKEUP_EYEBROW, intensity)
 
             result.success(true)
@@ -2446,7 +2572,8 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
 
     private fun handleSetMakeupIntensity(category: Int, call: MethodCall, result: Result) {
         if (!requireSdkReady(result)) return
-        val intensity = normalizedUnit(call.argument<Number>("intensity"), 0.5)
+        val maximum = if (category == NosmaiBeauty.MAKEUP_LIPSTICK || category == NosmaiBeauty.MAKEUP_BLUSHER) 2.0 else 1.0
+        val intensity = normalizedRange(call.argument<Number>("intensity"), 0.0, maximum, 0.5)
         executeBeautyFilter("SetMakeupIntensity", {
             NosmaiBeauty.setMakeupIntensity(category, intensity)
         }, result)
@@ -2606,6 +2733,53 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
         }, result)
     }
 
+    // ─── Hair Coloring ───
+    // A built-in beauty effect (same class as teeth whitening / eye colour):
+    // it rides the beauty chain, is cleared by clearAllBeautyFilters, and never
+    // touches the AR slot. The segmentation model is built lazily on its own
+    // native worker, so enabling never blocks the platform thread.
+
+    private fun hairColoringActive(): Boolean =
+        try { NosmaiBeauty.isHairColoringEnabled() } catch (_: Throwable) { false }
+
+    private fun handleSetHairColor(call: MethodCall, result: Result) {
+        try {
+            if (!requireSdkReady(result)) return
+            val r = normalizedUnit(call.argument<Number>("r"), 0.7)
+            val g = normalizedUnit(call.argument<Number>("g"), 0.35)
+            val b = normalizedUnit(call.argument<Number>("b"), 0.2)
+            val intensity = normalizedUnit(call.argument<Number>("intensity"), 0.6)
+
+            NosmaiBeauty.setHairColoringEnabled(true)
+            NosmaiBeauty.setHairColor(r, g, b)
+            NosmaiBeauty.setHairColorIntensity(intensity)
+
+            result.success(true)
+        } catch (t: Throwable) {
+            NosmaiLog.e(TAG, "setHairColor error: ${t.message}", t)
+            result.success(false)
+        }
+    }
+
+    private fun handleSetHairColorIntensity(call: MethodCall, result: Result) {
+        if (!requireSdkReady(result)) return
+        val intensity = normalizedUnit(call.argument<Number>("intensity"), 0.6)
+        executeBeautyFilter("SetHairColorIntensity", {
+            NosmaiBeauty.setHairColorIntensity(intensity)
+        }, result)
+    }
+
+    private fun handleRemoveHairColoring(result: Result) {
+        if (!requireSdkReady(result)) return
+        executeBeautyFilter("RemoveHairColoring", {
+            NosmaiBeauty.setHairColoringEnabled(false)
+        }, result)
+    }
+
+    private fun handleIsHairColoringActive(result: Result) {
+        result.success(hairColoringActive())
+    }
+
     private fun handleRemoveAllMakeup(result: Result) {
         if (!requireSdkReady(result)) return
         executeBeautyFilter("RemoveAllMakeup", {
@@ -2737,6 +2911,118 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             NosmaiLog.e(TAG, "clearBackgroundSegmentation error", t)
             result.success(false)
         }
+    }
+
+    // ─── Face Sticker ────────────────────────────────────────────────────────
+    // The sticker occupies the AR slot, but NosmaiPipelineState.activeEffectPath
+    // stays null while it does (the internal slot name is hidden), so every slot
+    // check on this path goes through NosmaiEffects.isFaceStickerActive().
+
+    private fun faceStickerActive(): Boolean {
+        return try {
+            NosmaiEffects.isFaceStickerActive()
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun faceStickerAnchorFromValue(value: Int?): NosmaiEffects.FaceStickerAnchor {
+        val anchors = NosmaiEffects.FaceStickerAnchor.values()
+        val index = value ?: 0
+        return if (index in anchors.indices) anchors[index] else NosmaiEffects.FaceStickerAnchor.CENTER
+    }
+
+    private fun emitCurrentPipelineState() {
+        runOnMain {
+            try {
+                if (::channel.isInitialized) {
+                    channel.invokeMethod(
+                        "onActiveEffectsChanged",
+                        pipelineStateToMap(NosmaiEffects.getCurrentPipelineState())
+                    )
+                }
+            } catch (_: Throwable) {}
+        }
+    }
+
+    private fun handleSetFaceSticker(call: MethodCall, result: Result) {
+        if (!requireSdkReady(result)) return
+        val imageData = call.argument<ByteArray>("imageData")
+        if (imageData == null || imageData.isEmpty()) {
+            result.error("INVALID_ARGUMENTS", "imageData is required", null)
+            return
+        }
+        val anchor = faceStickerAnchorFromValue(call.argument<Number>("anchor")?.toInt())
+        val offsetX = call.argument<Number>("offsetX")?.toFloat() ?: 0f
+        val offsetY = call.argument<Number>("offsetY")?.toFloat() ?: 0f
+        val scale = call.argument<Number>("scale")?.toFloat() ?: 0f
+        val rotationDeg = call.argument<Number>("rotationDeg")?.toFloat() ?: 0f
+        val opacity = (call.argument<Number>("opacity")?.toFloat() ?: 1f).coerceIn(0f, 1f)
+
+        try {
+            // The encoded bytes go straight to the SDK (never through a Bitmap),
+            // so an animated GIF keeps every frame. The SDK decodes off the
+            // platform thread and calls back once the sticker is on the face.
+            NosmaiEffects.setFaceSticker(
+                imageData, anchor, offsetX, offsetY, scale, rotationDeg, opacity,
+                object : NosmaiEffects.EffectCallback {
+                    override fun onSuccess() {
+                        emitCurrentPipelineState()
+                        mainHandler.post { result.success(true) }
+                    }
+
+                    override fun onError(errorMessage: String?) {
+                        NosmaiLog.w(TAG, "Face sticker apply failed: ${errorMessage ?: "unknown error"}")
+                        mainHandler.post { result.success(false) }
+                    }
+                }
+            )
+        } catch (t: Throwable) {
+            NosmaiLog.e(TAG, "setFaceSticker error", t)
+            result.success(false)
+        }
+    }
+
+    private fun handleSetFaceStickerPlacement(call: MethodCall, result: Result) {
+        if (!requireSdkReady(result)) return
+        try {
+            val anchor = faceStickerAnchorFromValue(call.argument<Number>("anchor")?.toInt())
+            val offsetX = call.argument<Number>("offsetX")?.toFloat() ?: 0f
+            val offsetY = call.argument<Number>("offsetY")?.toFloat() ?: 0f
+            val scale = call.argument<Number>("scale")?.toFloat() ?: 0f
+            val rotationDeg = call.argument<Number>("rotationDeg")?.toFloat() ?: 0f
+            val opacity = (call.argument<Number>("opacity")?.toFloat() ?: 1f).coerceIn(0f, 1f)
+            // Cheap by design: the texture stays uploaded, only placement moves.
+            NosmaiEffects.setFaceStickerPlacement(anchor, offsetX, offsetY, scale, rotationDeg, opacity)
+            result.success(null)
+        } catch (t: Throwable) {
+            NosmaiLog.e(TAG, "setFaceStickerPlacement error", t)
+            result.error("FACE_STICKER_ERROR", t.message, null)
+        }
+    }
+
+    private fun handleClearFaceSticker(result: Result) {
+        try {
+            NosmaiEffects.clearFaceSticker(object : NosmaiEffects.EffectCallback {
+                override fun onSuccess() {
+                    emitCurrentPipelineState()
+                    mainHandler.post { result.success(null) }
+                }
+
+                override fun onError(errorMessage: String?) {
+                    mainHandler.post {
+                        result.error("CLEAR_FACE_STICKER_ERROR", errorMessage ?: "unknown error", null)
+                    }
+                }
+            })
+        } catch (t: Throwable) {
+            NosmaiLog.e(TAG, "clearFaceSticker error", t)
+            result.error("CLEAR_FACE_STICKER_ERROR", t.message, null)
+        }
+    }
+
+    private fun handleIsFaceStickerActive(result: Result) {
+        result.success(faceStickerActive())
     }
 
     private fun mapCategoryToFilterType(cat: String?): String {
@@ -3521,6 +3807,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
     }
 
     private fun handleDispose(result: Result) {
+        invalidateBeautyPreparation()
         try {
             NosmaiLog.d(TAG, "handleDispose: Full plugin disposal")
             cleanupInProgress = true

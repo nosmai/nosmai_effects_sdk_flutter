@@ -34,7 +34,16 @@ target 'Runner' do
 
   # Resolve the current production SDK directly from the public CocoaPods CDN.
   # This remains remote and avoids any local framework override.
-  pod 'NosmaiCameraSDK', :podspec => 'https://cdn.cocoapods.org/Specs/0/a/b/NosmaiCameraSDK/3.0.5/NosmaiCameraSDK.podspec.json'
+  #
+  # Local SDK development only: NOSMAI_SDK_LOCAL_PODSPEC_DIR points at a folder
+  # holding NosmaiCameraSDK.podspec next to a nosmai.framework built from
+  # source, to compile against native APIs that have not shipped yet. Leave it
+  # unset for every published build.
+  if ENV['NOSMAI_SDK_LOCAL_PODSPEC_DIR']
+    pod 'NosmaiCameraSDK', :path => ENV['NOSMAI_SDK_LOCAL_PODSPEC_DIR']
+  else
+    pod 'NosmaiCameraSDK', :podspec => 'https://cdn.cocoapods.org/Specs/0/a/b/NosmaiCameraSDK/3.0.6/NosmaiCameraSDK.podspec.json'
+  end
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 

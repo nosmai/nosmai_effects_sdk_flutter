@@ -16,7 +16,7 @@
 // These selectors were added in the native iOS 3.0.5 release. Declaring them
 // here keeps this wrapper source-compatible with earlier 3.x headers; every
 // call is still guarded so an older installed binary fails safely.
-@interface NosmaiEffectsEngine (NosmaiFlutterBeautyV3Controls)
+@interface NosmaiEffectsEngine (NosmaiFlutterBeautyControls)
 - (void)applyFaceContourHighlighter:(float)level;
 - (void)applyDarkCircleCorrector:(float)level;
 @end
@@ -26,6 +26,40 @@
 // is checked before every call.
 @interface NosmaiSDK (NosmaiFlutterUnifiedReshape)
 - (void)setReshapeType:(NSInteger)type value:(float)value;
+@end
+
+// Face sticker selectors ship in a native iOS release newer than 3.0.5.
+// Declared here so this wrapper stays source-compatible with the pinned pod;
+// every call is guarded with -respondsToSelector: so an older installed
+// binary fails safely with UNSUPPORTED_SDK_VERSION. The anchor is typed
+// NSInteger because older headers do not declare NosmaiFaceStickerAnchor.
+@interface NosmaiSDK (NosmaiFlutterFaceSticker)
+- (BOOL)setFaceStickerData:(NSData *)data
+                    anchor:(NSInteger)anchor
+                   offsetX:(float)offsetX
+                   offsetY:(float)offsetY
+                     scale:(float)scale
+               rotationDeg:(float)rotationDeg
+                   opacity:(float)opacity;
+- (void)setFaceStickerAnchor:(NSInteger)anchor
+                     offsetX:(float)offsetX
+                     offsetY:(float)offsetY
+                       scale:(float)scale
+                 rotationDeg:(float)rotationDeg
+                     opacity:(float)opacity;
+- (void)clearFaceSticker;
+- (BOOL)isFaceStickerActive;
+@end
+
+// Hair colouring selectors also ship in a native iOS release newer than 3.0.5.
+// Same rule: declared here for source compatibility with the pinned pod and
+// runtime-guarded with -respondsToSelector: (UNSUPPORTED_SDK_VERSION on an
+// older binary). Only BOOL/float parameters, so no enum typing issues.
+@interface NosmaiSDK (NosmaiFlutterHairColoring)
+- (void)setHairColoringEnabled:(BOOL)enabled;
+- (void)setHairColorWithRed:(float)red green:(float)green blue:(float)blue;
+- (void)setHairColorIntensity:(float)intensity;
+- (BOOL)isHairColoringEnabled;
 @end
 
 // NosmaiExternalProcessor interface
@@ -51,8 +85,23 @@
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSMutableArray *> *pendingCloudDownloadResults;
 @property(nonatomic, assign) BOOL gameEventsEnabled;
 // Flash and Torch state tracking (NosmaiCamera doesn't provide getters)
+@property(atomic, assign) NSUInteger beautyPreparationGeneration;
+@property(nonatomic, assign) BOOL beautyPrepared;
+@property(nonatomic, assign) BOOL beautyPreparing;
+@property(nonatomic, strong) NSMutableArray* beautyPreparationWaiters;
+@property(nonatomic, strong) dispatch_queue_t beautyPreparationQueue;
 @property(nonatomic, assign) AVCaptureFlashMode currentFlashMode;
 @property(nonatomic, assign) AVCaptureTorchMode currentTorchMode;
+@end
+
+@interface NosmaiSDK (NosmaiFlutterProductionBeauty)
+- (void)applyFaceContour:(float)contour highlighter:(float)highlighter;
+- (void)applyFreckles:(float)quantity;
+- (void)applyFoundation:(float)coverage r:(float)r g:(float)g b:(float)b;
+- (void)removeFoundation;
+- (void)setBeautyVisible:(BOOL)visible;
+- (BOOL)isBeautyVisible;
+- (BOOL)warmUpMakeup;
 @end
 
 @implementation NosmaiFlutterPlugin
@@ -85,6 +134,8 @@
     _cacheQueue = dispatch_queue_create("com.nosmai.cache", DISPATCH_QUEUE_CONCURRENT);
 
     _filterOperationSemaphore = dispatch_semaphore_create(1);
+    _beautyPreparationQueue = dispatch_queue_create("com.nosmai.flutter.beauty-preparation", DISPATCH_QUEUE_SERIAL);
+    _beautyPreparationWaiters = [NSMutableArray array];
 
     // Initialize flash/torch state to off
     _currentFlashMode = AVCaptureFlashModeOff;
@@ -133,7 +184,8 @@
     [self handleApplySkinWhitening:call result:result];
   }
   else if ([@"applyContourHighlighter" isEqualToString:method]) {
-    [self handleApplyContourHighlighter:call result:result];
+    if (call.arguments[@"contour"] || call.arguments[@"highlighter"]) [self handleProductionBeauty:call result:result];
+    else [self handleApplyContourHighlighter:call result:result];
   }
   else if ([@"applyDarkCircleCorrector" isEqualToString:method]) {
     [self handleApplyDarkCircleCorrector:call result:result];
@@ -161,6 +213,15 @@
   }
   else if ([@"removeBuiltInFilterByName" isEqualToString:method]) {
     [self handleRemoveBuiltInFilterByName:call result:result];
+  }
+  else if ([@"prepareBeautyFilters" isEqualToString:method]) {
+    [self handlePrepareBeautyFilters:result];
+  }
+  else if ([@"isBeautyPrepared" isEqualToString:method]) {
+    result(@(self.isInitialized && self.beautyPrepared));
+  }
+  else if ([@[@"applyFreckles", @"applyFoundation", @"removeFoundation", @"setBeautyVisible", @"isBeautyVisible"] containsObject:method]) {
+    [self handleProductionBeauty:call result:result];
   }
   // Lipstick Methods
   else if ([@"applyLipstick" isEqualToString:method]) {
@@ -256,6 +317,19 @@
   else if ([@"removeEyeColoring" isEqualToString:method]) {
     [self handleRemoveEyeColoring:call result:result];
   }
+  // Hair Coloring Methods
+  else if ([@"setHairColor" isEqualToString:method]) {
+    [self handleSetHairColor:call result:result];
+  }
+  else if ([@"setHairColorIntensity" isEqualToString:method]) {
+    [self handleSetHairColorIntensity:call result:result];
+  }
+  else if ([@"removeHairColoring" isEqualToString:method]) {
+    [self handleRemoveHairColoring:call result:result];
+  }
+  else if ([@"isHairColoringActive" isEqualToString:method]) {
+    [self handleIsHairColoringActive:call result:result];
+  }
   // Utility Methods
   else if ([@"removeAllMakeup" isEqualToString:method]) {
     [self handleRemoveAllMakeup:call result:result];
@@ -320,9 +394,6 @@
   }
   else if ([@"getAllLocalFilters" isEqualToString:method]) {
     [self handleGetAllLocalFilters:call result:result];
-  }
-  else if ([@"getDebugFilters" isEqualToString:method]) {
-    [self handleGetDebugFilters:call result:result];
   }
   else if ([@"getLocalEffects" isEqualToString:method]) {
     [self handleGetLocalEffects:call result:result];
@@ -447,6 +518,19 @@
   }
   else if ([@"clearBackgroundSegmentation" isEqualToString:method]) {
     [self handleClearBackgroundSegmentation:call result:result];
+  }
+  // Face Sticker Methods
+  else if ([@"setFaceSticker" isEqualToString:method]) {
+    [self handleSetFaceSticker:call result:result];
+  }
+  else if ([@"setFaceStickerPlacement" isEqualToString:method]) {
+    [self handleSetFaceStickerPlacement:call result:result];
+  }
+  else if ([@"clearFaceSticker" isEqualToString:method]) {
+    [self handleClearFaceSticker:call result:result];
+  }
+  else if ([@"isFaceStickerActive" isEqualToString:method]) {
+    [self handleIsFaceStickerActive:call result:result];
   }
   else {
     result(FlutterMethodNotImplemented);
@@ -599,6 +683,7 @@
 }
 
 - (void)handleStopProcessing:(FlutterMethodCall*)call result:(FlutterResult)result {
+  [self invalidateBeautyPreparation];
   if (!self.isInitialized) {
     result([FlutterError errorWithCode:@"NOT_INITIALIZED"
                                message:@"SDK must be initialized before stopping processing"
@@ -1068,6 +1153,99 @@
 
 #pragma mark - Lipstick Methods
 
+- (float)beautyNumber:(NSDictionary*)args key:(NSString*)key fallback:(float)fallback minimum:(float)minimum maximum:(float)maximum {
+  id value = args[key];
+  float number = [value isKindOfClass:[NSNumber class]] ? [value floatValue] : fallback;
+  return fminf(maximum, fmaxf(minimum, isfinite(number) ? number : 0.f));
+}
+
+- (void)invalidateBeautyPreparation {
+  self.beautyPreparationGeneration++;
+  self.beautyPrepared = NO;
+  self.beautyPreparing = NO;
+  NSArray* waiting = [self.beautyPreparationWaiters copy];
+  [self.beautyPreparationWaiters removeAllObjects];
+  for (FlutterResult pending in waiting) pending(@NO);
+}
+
+- (void)finishBeautyPreparation:(NSUInteger)generation prepared:(BOOL)prepared error:(FlutterError*)error {
+  if (generation != self.beautyPreparationGeneration) return;
+  self.beautyPreparing = NO;
+  self.beautyPrepared = prepared && error == nil;
+  NSArray* waiting = [self.beautyPreparationWaiters copy];
+  [self.beautyPreparationWaiters removeAllObjects];
+  for (FlutterResult pending in waiting) pending(error ?: @(self.beautyPrepared));
+}
+
+- (void)handlePrepareBeautyFilters:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED" message:@"Initialize the SDK before preparing beauty." details:nil]);
+    return;
+  }
+  if (self.beautyPrepared) { result(@YES); return; }
+  NosmaiSDK* sdk = [NosmaiSDK sharedInstance];
+  if (![sdk respondsToSelector:@selector(warmUpMakeup)]) {
+    result([FlutterError errorWithCode:@"SDK_UPGRADE_REQUIRED" message:@"Use the current native beauty SDK." details:nil]);
+    return;
+  }
+  [self.beautyPreparationWaiters addObject:[result copy]];
+  if (self.beautyPreparing) return;
+  self.beautyPreparing = YES;
+  NSUInteger generation = self.beautyPreparationGeneration;
+  dispatch_async(self.beautyPreparationQueue, ^{
+    @autoreleasepool {
+      if (generation != self.beautyPreparationGeneration) return;
+      BOOL prepared = NO;
+      FlutterError* error = nil;
+      @try {
+        // The SDK prepares GPU resources and starts asynchronous iOS model warm-up.
+        prepared = [sdk warmUpMakeup];
+      } @catch (NSException* exception) {
+        NSString* code = [exception.reason.lowercaseString containsString:@"license"] ? @"INVALID_LICENSE" : @"FILTER_ERROR";
+        error = [FlutterError errorWithCode:code message:exception.reason details:exception.userInfo];
+      }
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [self finishBeautyPreparation:generation prepared:prepared error:error];
+      });
+    }
+  });
+}
+
+- (void)handleProductionBeauty:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED" message:@"Initialize the SDK before applying beauty." details:nil]); return;
+  }
+  NSDictionary* args = [call.arguments isKindOfClass:[NSDictionary class]] ? call.arguments : @{};
+  NSString* method = call.method;
+  NosmaiSDK* sdk = [NosmaiSDK sharedInstance];
+  NSDictionary* selectors = @{
+    @"applyContourHighlighter": @"applyFaceContour:highlighter:",
+    @"applyFreckles": @"applyFreckles:", @"applyFoundation": @"applyFoundation:r:g:b:",
+    @"removeFoundation": @"removeFoundation", @"setBeautyVisible": @"setBeautyVisible:", @"isBeautyVisible": @"isBeautyVisible"
+  };
+  if (![sdk respondsToSelector:NSSelectorFromString(selectors[method])]) {
+    result([FlutterError errorWithCode:@"SDK_UPGRADE_REQUIRED" message:@"Update the native beauty SDK." details:method]); return;
+  }
+  @try {
+    if ([method isEqualToString:@"applyContourHighlighter"]) {
+      [sdk applyFaceContour:[self beautyNumber:args key:@"contour" fallback:0 minimum:0 maximum:2]
+                highlighter:[self beautyNumber:args key:@"highlighter" fallback:0 minimum:0 maximum:2]];
+    } else if ([method isEqualToString:@"applyFreckles"]) {
+      [sdk applyFreckles:[self beautyNumber:args key:@"quantity" fallback:0 minimum:0 maximum:1]];
+    } else if ([method isEqualToString:@"applyFoundation"]) {
+      [sdk applyFoundation:[self beautyNumber:args key:@"coverage" fallback:0 minimum:0 maximum:1]
+                        r:[self beautyNumber:args key:@"r" fallback:.76 minimum:0 maximum:1]
+                        g:[self beautyNumber:args key:@"g" fallback:.57 minimum:0 maximum:1]
+                        b:[self beautyNumber:args key:@"b" fallback:.43 minimum:0 maximum:1]];
+    } else if ([method isEqualToString:@"removeFoundation"]) [sdk removeFoundation];
+    else if ([method isEqualToString:@"setBeautyVisible"]) [sdk setBeautyVisible:[args[@"visible"] boolValue]];
+    else if ([method isEqualToString:@"isBeautyVisible"]) { result(@([sdk isBeautyVisible])); return; }
+    result(nil);
+  } @catch (NSException* exception) {
+    result([FlutterError errorWithCode:@"FILTER_ERROR" message:exception.reason details:exception.userInfo]);
+  }
+}
+
 - (void)handleApplyLipstick:(FlutterMethodCall*)call result:(FlutterResult)result {
   if (!self.isInitialized) {
     result([FlutterError errorWithCode:@"NOT_INITIALIZED"
@@ -1088,12 +1266,15 @@
 
   @try {
     NosmaiLipstickStyle style = (NosmaiLipstickStyle)styleNum.integerValue;
-    // Use default color index 0
-    [[NosmaiSDK sharedInstance] applyLipstickWithStyle:style
-                                            colorIndex:0];
+    if (call.arguments[@"r"] || call.arguments[@"g"] || call.arguments[@"b"]) {
+      [[NosmaiSDK sharedInstance] applyLipstickWithStyle:style
+        r:[self beautyNumber:call.arguments key:@"r" fallback:.76 minimum:0 maximum:1]
+        g:[self beautyNumber:call.arguments key:@"g" fallback:.055 minimum:0 maximum:1]
+        b:[self beautyNumber:call.arguments key:@"b" fallback:.075 minimum:0 maximum:1]];
+    } else [[NosmaiSDK sharedInstance] applyLipstickWithStyle:style];
 
     if (intensity) {
-      [[NosmaiSDK sharedInstance] setLipstickIntensity:intensity.floatValue];
+      [[NosmaiSDK sharedInstance] setLipstickIntensity:[self beautyNumber:call.arguments key:@"intensity" fallback:.5 minimum:0 maximum:2]];
     }
 
     result(@YES);
@@ -1209,11 +1390,15 @@
 
   @try {
     NosmaiEyeshadowStyle style = (NosmaiEyeshadowStyle)styleNum.integerValue;
+    const float defaults[3][3] = {{43.f/255.f,28.f/255.f,15.f/255.f},{.65f,.45f,.25f},{.38f,.30f,.25f}};
+    NSInteger preset = MAX(0, MIN(2, styleNum.integerValue));
     [[NosmaiSDK sharedInstance] applyEyeshadowWithStyle:style
-                                             colorIndex:0];
+      r:[self beautyNumber:call.arguments key:@"r" fallback:defaults[preset][0] minimum:0 maximum:1]
+      g:[self beautyNumber:call.arguments key:@"g" fallback:defaults[preset][1] minimum:0 maximum:1]
+      b:[self beautyNumber:call.arguments key:@"b" fallback:defaults[preset][2] minimum:0 maximum:1]];
 
     if (intensity) {
-      [[NosmaiSDK sharedInstance] setEyeshadowIntensity:intensity.floatValue];
+      [[NosmaiSDK sharedInstance] setEyeshadowIntensity:[self beautyNumber:call.arguments key:@"intensity" fallback:.5 minimum:0 maximum:1]];
     }
 
     result(@YES);
@@ -1304,11 +1489,15 @@
 
   @try {
     NosmaiBlusherStyle style = (NosmaiBlusherStyle)styleNum.integerValue;
+    const float defaults[3][3] = {{1.f,169.f/255.f,153.f/255.f},{157.f/255.f,63.f/255.f,37.f/255.f},{198.f/255.f,114.f/255.f,124.f/255.f}};
+    NSInteger preset = MAX(0, MIN(2, styleNum.integerValue));
     [[NosmaiSDK sharedInstance] applyBlusherWithStyle:style
-                                           colorIndex:0];
+      r:[self beautyNumber:call.arguments key:@"r" fallback:defaults[preset][0] minimum:0 maximum:1]
+      g:[self beautyNumber:call.arguments key:@"g" fallback:defaults[preset][1] minimum:0 maximum:1]
+      b:[self beautyNumber:call.arguments key:@"b" fallback:defaults[preset][2] minimum:0 maximum:1]];
 
     if (intensity) {
-      [[NosmaiSDK sharedInstance] setBlusherIntensity:intensity.floatValue];
+      [[NosmaiSDK sharedInstance] setBlusherIntensity:[self beautyNumber:call.arguments key:@"intensity" fallback:.5 minimum:0 maximum:2]];
     }
 
     result(@YES);
@@ -1493,11 +1682,15 @@
 
   @try {
     NosmaiEyebrowStyle style = (NosmaiEyebrowStyle)styleNum.integerValue;
+    const float defaults[3][3] = {{.35f,.25f,.20f},{.20f,.15f,.12f},{.30f,.20f,.15f}};
+    NSInteger preset = MAX(0, MIN(2, styleNum.integerValue));
     [[NosmaiSDK sharedInstance] applyEyebrowWithStyle:style
-                                           colorIndex:0];
+      r:[self beautyNumber:call.arguments key:@"r" fallback:defaults[preset][0] minimum:0 maximum:1]
+      g:[self beautyNumber:call.arguments key:@"g" fallback:defaults[preset][1] minimum:0 maximum:1]
+      b:[self beautyNumber:call.arguments key:@"b" fallback:defaults[preset][2] minimum:0 maximum:1]];
 
     if (intensity) {
-      [[NosmaiSDK sharedInstance] setEyebrowIntensity:intensity.floatValue];
+      [[NosmaiSDK sharedInstance] setEyebrowIntensity:[self beautyNumber:call.arguments key:@"intensity" fallback:.5 minimum:0 maximum:1]];
     }
 
     result(@YES);
@@ -2107,6 +2300,7 @@
 }
 
 - (void)handleDetachCameraView:(FlutterMethodCall*)call result:(FlutterResult)result {
+  [self invalidateBeautyPreparation];
   @try {
     if (self.isInitialized) {
       // Do not hold cameraStateSemaphore while detaching. The camera is allowed
@@ -2133,6 +2327,7 @@
 }
 
 - (void)handleEndCameraSession:(FlutterMethodCall*)call result:(FlutterResult)result {
+  [self invalidateBeautyPreparation];
   if (!self.isInitialized) {
     result(@NO);
     return;
@@ -2453,6 +2648,10 @@
       : nil;
   NSString *activeEffectType = [self normalizeLocalFilterTypeForFlutter:activeEffectInfo[@"filterType"]];
   map[@"hasBeautyEffect"] = @([activeEffectType isEqualToString:@"beauty_effect"]);
+  // A sticker occupies the AR slot while activeEffectPath stays nil, so the
+  // slot cannot be judged from the path alone.
+  map[@"isFaceStickerActive"] = @([self faceStickerActive]);
+  map[@"isHairColoringActive"] = @([self hairColoringActive]);
   return map;
 }
 
@@ -3068,108 +3267,6 @@
   }
 }
 
-- (void)handleGetDebugFilters:(FlutterMethodCall*)call result:(FlutterResult)result {
-  if (!self.isInitialized) {
-    result([FlutterError errorWithCode:@"NOT_INITIALIZED"
-                               message:@"SDK must be initialized before getting debug filters"
-                               details:@"Please call initWithLicense() first"]);
-    return;
-  }
-
-  NSString *requestedType = nil;
-  if (call.arguments && [call.arguments isKindOfClass:[NSDictionary class]]) {
-    NSDictionary *args = call.arguments;
-    id rawType = args[@"filterType"] ?: args[@"type"];
-    if ([rawType isKindOfClass:[NSString class]]) {
-      NSString *value = [(NSString *)rawType lowercaseString];
-      value = [value stringByReplacingOccurrencesOfString:@"-" withString:@"_"];
-      if (value.length > 0 && ![value isEqualToString:@"all"]) {
-        requestedType = [self normalizeLocalFilterTypeForFlutter:value];
-      }
-    }
-  }
-
-  NosmaiFilterType nativeType = NosmaiFilterTypeUnknown;
-  if ([requestedType isEqualToString:@"filter"]) {
-    nativeType = NosmaiFilterTypeFilter;
-  } else if ([requestedType isEqualToString:@"effect"]) {
-    nativeType = NosmaiFilterTypeEffect;
-  } else if ([requestedType isEqualToString:@"beauty_effect"]) {
-    nativeType = NosmaiFilterTypeBeautyEffect;
-  } else if ([requestedType isEqualToString:@"background"]) {
-    nativeType = NosmaiFilterTypeBackground;
-  } else if ([requestedType isEqualToString:@"game"]) {
-    nativeType = NosmaiFilterTypeGame;
-  }
-
-  void (^completion)(NSArray<NosmaiFilterInfo *> *, NSError *) =
-      ^(NSArray<NosmaiFilterInfo *> *filters, NSError *error) {
-    if (error) {
-      result([FlutterError errorWithCode:@"DEBUG_FILTER_LOAD_ERROR"
-                                 message:error.localizedDescription ?: @"Error loading debug filters"
-                                 details:error.userInfo]);
-      return;
-    }
-
-    @try {
-      NSMutableArray<NSDictionary *> *rawFilters =
-          [NSMutableArray arrayWithCapacity:filters.count];
-
-      for (NosmaiFilterInfo *filterInfo in filters) {
-        NSMutableDictionary *debugInfo =
-            [[filterInfo dictionaryRepresentation] mutableCopy];
-        if (!debugInfo) {
-          debugInfo = [NSMutableDictionary dictionary];
-        }
-
-        NSString *path = filterInfo.path;
-        if (path.length > 0) {
-          debugInfo[@"path"] = path;
-        }
-        debugInfo[@"filterType"] =
-            [self normalizeLocalFilterTypeForFlutter:
-                (filterInfo.typeKey ?: debugInfo[@"filterType"])];
-        debugInfo[@"type"] = @"local";
-        debugInfo[@"isDownloaded"] = @YES;
-        [rawFilters addObject:[debugInfo copy]];
-      }
-
-      NSArray<NSDictionary *> *sanitizedFilters =
-          [self sanitizeFiltersForFlutter:rawFilters];
-      NSMutableArray<NSDictionary *> *debugFilters =
-          [NSMutableArray arrayWithCapacity:sanitizedFilters.count];
-      for (NSDictionary *filterInfo in sanitizedFilters) {
-        NSMutableDictionary *debugInfo = [filterInfo mutableCopy];
-        debugInfo[@"debug"] = @YES;
-        NSString *path = debugInfo[@"path"];
-        if (path.length > 0) {
-          debugInfo[@"effectPath"] = path;
-        }
-        [debugFilters addObject:[debugInfo copy]];
-      }
-
-      result([debugFilters copy]);
-    } @catch (NSException *exception) {
-      result([FlutterError errorWithCode:@"DEBUG_FILTER_LOAD_ERROR"
-                                 message:[NSString stringWithFormat:@"Error loading debug filters: %@", exception.reason]
-                                 details:exception.userInfo.description]);
-    }
-  };
-
-  @try {
-    NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
-    if (requestedType) {
-      [sdk getDebugFiltersOfType:nativeType completion:completion];
-    } else {
-      [sdk getDebugFiltersWithCompletion:completion];
-    }
-  } @catch (NSException *exception) {
-    result([FlutterError errorWithCode:@"DEBUG_FILTER_LOAD_ERROR"
-                               message:[NSString stringWithFormat:@"Error loading debug filters: %@", exception.reason]
-                               details:exception.userInfo.description]);
-  }
-}
-
 - (void)handleGetLocalEffects:(FlutterMethodCall*)call result:(FlutterResult)result {
   if (!self.isInitialized) {
     result([FlutterError errorWithCode:@"NOT_INITIALIZED"
@@ -3549,17 +3646,18 @@
 - (NSDictionary *)mapFrameworkKeysToPluginKeys:(NSDictionary *)frameworkFilter {
   NSMutableDictionary *pluginFilter = [NSMutableDictionary dictionary];
 
-  NSString *backendId = [frameworkFilter[@"id"] isKindOfClass:[NSString class]]
+  NSString *catalogRecordId = [frameworkFilter[@"id"] isKindOfClass:[NSString class]]
       ? frameworkFilter[@"id"]
       : nil;
   NSString *filterId = [frameworkFilter[@"filterId"] isKindOfClass:[NSString class]]
       ? frameworkFilter[@"filterId"]
       : nil;
-  // The public id must be accepted by download/remove APIs. Preserve the
-  // catalog UUID separately for clients that need backend record identity.
-  pluginFilter[@"id"] = filterId ?: backendId ?: frameworkFilter[@"name"] ?: @"";
+  // The public id must be the identifier download/remove accept: the package
+  // filter id. The catalog record UUID is only a fallback for a record that
+  // carries no filterId; it is not exposed as a field of its own, because the
+  // Android SDK never reports one and the field could not be honoured there.
+  pluginFilter[@"id"] = filterId ?: catalogRecordId ?: frameworkFilter[@"name"] ?: @"";
   if (filterId.length > 0) pluginFilter[@"filterId"] = filterId;
-  if (backendId.length > 0) pluginFilter[@"backendId"] = backendId;
   pluginFilter[@"name"] = frameworkFilter[@"name"] ?: @"";
   pluginFilter[@"description"] = frameworkFilter[@"description"] ?: @"";
   pluginFilter[@"displayName"] = frameworkFilter[@"displayName"] ?: frameworkFilter[@"name"] ?: @"";
@@ -4941,7 +5039,6 @@ static BOOL _liveStreamOutputArmed = NO;
     _liveStreamOutputArmed = YES;
     [_liveStreamCallbackLock unlock];
 
-    NSLog(@"✅ Live stream frame output armed (preview stays live)");
 }
 
 + (void)clearLiveStreamFrameCallback {
@@ -4957,10 +5054,8 @@ static BOOL _liveStreamOutputArmed = NO;
                     // Recording still needs live-frame output enabled. Keep a no-op
                     // consumer until recording owns the output lifecycle again.
                 };
-            NSLog(@"✅ Live stream frame output disarmed (recording remains active)");
         } else {
             core.liveFrameStreamCallback = nil;
-            NSLog(@"✅ Live stream frame output disarmed");
         }
         _liveStreamOutputArmed = NO;
     }
@@ -5098,6 +5193,283 @@ static BOOL _liveStreamOutputArmed = NO;
                                message:exception.reason
                                details:exception.userInfo]);
   }
+}
+
+#pragma mark - Hair Coloring
+
+// Built-in beauty effect on NosmaiSDK (not NosmaiEffectsEngine). Selectors are
+// runtime-guarded (see the category at the top of this file) so the plugin
+// still loads against an older pod.
+
+- (BOOL)hairColoringActive {
+  NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+  if (![sdk respondsToSelector:@selector(isHairColoringEnabled)]) {
+    return NO;
+  }
+  @try {
+    return [sdk isHairColoringEnabled];
+  } @catch (NSException *exception) {
+    return NO;
+  }
+}
+
+- (BOOL)hairColoringSelectorAvailable:(SEL)selector result:(FlutterResult)result {
+  if ([[NosmaiSDK sharedInstance] respondsToSelector:selector]) {
+    return YES;
+  }
+  result([FlutterError errorWithCode:@"UNSUPPORTED_SDK_VERSION"
+                             message:@"The installed NosmaiCameraSDK does not support hair coloring"
+                             details:@"Update the NosmaiCameraSDK pod to a release that includes the hair coloring API."]);
+  return NO;
+}
+
+- (void)handleSetHairColor:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED"
+                               message:@"SDK must be initialized before setting hair color"
+                               details:nil]);
+    return;
+  }
+
+  NSNumber* r = call.arguments[@"r"];
+  NSNumber* g = call.arguments[@"g"];
+  NSNumber* b = call.arguments[@"b"];
+  NSNumber* intensity = call.arguments[@"intensity"];
+
+  if (!r || !g || !b) {
+    result([FlutterError errorWithCode:@"INVALID_ARGUMENTS"
+                               message:@"RGB values are required"
+                               details:nil]);
+    return;
+  }
+  if (![self hairColoringSelectorAvailable:@selector(setHairColoringEnabled:) result:result]) {
+    return;
+  }
+
+  @try {
+    NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+    [sdk setHairColoringEnabled:YES];
+    [sdk setHairColorWithRed:r.floatValue green:g.floatValue blue:b.floatValue];
+    if (intensity) {
+      [sdk setHairColorIntensity:intensity.floatValue];
+    }
+    [self emitPipelineStateToFlutter];
+    result(@YES);
+  } @catch (NSException *exception) {
+    result([FlutterError errorWithCode:@"HAIR_COLOR_ERROR"
+                               message:exception.reason
+                               details:exception.userInfo]);
+  }
+}
+
+- (void)handleSetHairColorIntensity:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED"
+                               message:@"SDK must be initialized"
+                               details:nil]);
+    return;
+  }
+
+  NSNumber* intensity = call.arguments[@"intensity"];
+  if (!intensity) {
+    result([FlutterError errorWithCode:@"INVALID_ARGUMENTS"
+                               message:@"Intensity value is required"
+                               details:nil]);
+    return;
+  }
+  if (![self hairColoringSelectorAvailable:@selector(setHairColorIntensity:) result:result]) {
+    return;
+  }
+
+  @try {
+    [[NosmaiSDK sharedInstance] setHairColorIntensity:intensity.floatValue];
+    result(nil);
+  } @catch (NSException *exception) {
+    result([FlutterError errorWithCode:@"HAIR_COLOR_ERROR"
+                               message:exception.reason
+                               details:exception.userInfo]);
+  }
+}
+
+- (void)handleRemoveHairColoring:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED"
+                               message:@"SDK must be initialized"
+                               details:nil]);
+    return;
+  }
+  NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+  if (![sdk respondsToSelector:@selector(setHairColoringEnabled:)]) {
+    // Nothing could have been enabled on this binary; removal is trivially satisfied.
+    result(nil);
+    return;
+  }
+
+  @try {
+    [sdk setHairColoringEnabled:NO];
+    [self emitPipelineStateToFlutter];
+    result(nil);
+  } @catch (NSException *exception) {
+    result([FlutterError errorWithCode:@"HAIR_COLOR_ERROR"
+                               message:exception.reason
+                               details:exception.userInfo]);
+  }
+}
+
+- (void)handleIsHairColoringActive:(FlutterMethodCall*)call result:(FlutterResult)result {
+  result(@([self hairColoringActive]));
+}
+
+#pragma mark - Face Sticker
+
+// The sticker occupies the AR slot, but the pipeline state's activeEffectPath
+// stays nil while it does, so every slot check on this path goes through
+// -isFaceStickerActive. Selectors are runtime-guarded (see the category at the
+// top of this file) so the plugin still loads against an older pod.
+
+- (BOOL)faceStickerActive {
+  NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+  if (![sdk respondsToSelector:@selector(isFaceStickerActive)]) {
+    return NO;
+  }
+  @try {
+    return [sdk isFaceStickerActive];
+  } @catch (NSException *exception) {
+    return NO;
+  }
+}
+
+- (BOOL)faceStickerSelectorAvailable:(SEL)selector result:(FlutterResult)result {
+  if ([[NosmaiSDK sharedInstance] respondsToSelector:selector]) {
+    return YES;
+  }
+  result([FlutterError errorWithCode:@"UNSUPPORTED_SDK_VERSION"
+                             message:@"The installed NosmaiCameraSDK does not support face stickers"
+                             details:@"Update the NosmaiCameraSDK pod to a release that includes the face sticker API."]);
+  return NO;
+}
+
+- (void)handleSetFaceSticker:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED"
+                               message:@"SDK must be initialized before applying a face sticker"
+                               details:@"Please call initWithLicense() first"]);
+    return;
+  }
+
+  FlutterStandardTypedData *imageData = call.arguments[@"imageData"];
+  if (![imageData isKindOfClass:[FlutterStandardTypedData class]] || imageData.data.length == 0) {
+    result([FlutterError errorWithCode:@"INVALID_ARGUMENTS"
+                               message:@"imageData is required"
+                               details:nil]);
+    return;
+  }
+
+  SEL selector = @selector(setFaceStickerData:anchor:offsetX:offsetY:scale:rotationDeg:opacity:);
+  if (![self faceStickerSelectorAvailable:selector result:result]) {
+    return;
+  }
+
+  NSInteger anchor = [call.arguments[@"anchor"] integerValue];
+  float offsetX = [call.arguments[@"offsetX"] floatValue];
+  float offsetY = [call.arguments[@"offsetY"] floatValue];
+  float scale = [call.arguments[@"scale"] floatValue];
+  float rotationDeg = [call.arguments[@"rotationDeg"] floatValue];
+  NSNumber *opacityNumber = call.arguments[@"opacity"];
+  float opacity = opacityNumber ? MIN(MAX([opacityNumber floatValue], 0.0f), 1.0f) : 1.0f;
+
+  // Same AR-slot serialisation as applyEffect. The SDK call is synchronous:
+  // it decodes (a GIF frame by frame, in bounded memory) and uploads before
+  // returning, so the result is final when it comes back.
+  dispatch_semaphore_wait(self.filterOperationSemaphore, DISPATCH_TIME_FOREVER);
+  @try {
+    // NSData, not UIImage: a UIImage would keep only a GIF's first frame.
+    BOOL applied = [[NosmaiSDK sharedInstance] setFaceStickerData:imageData.data
+                                                           anchor:anchor
+                                                          offsetX:offsetX
+                                                          offsetY:offsetY
+                                                            scale:scale
+                                                      rotationDeg:rotationDeg
+                                                          opacity:opacity];
+    dispatch_semaphore_signal(self.filterOperationSemaphore);
+    if (applied) {
+      [self emitPipelineStateToFlutter];
+    }
+    result(@(applied));
+  } @catch (NSException *exception) {
+    dispatch_semaphore_signal(self.filterOperationSemaphore);
+    result([FlutterError errorWithCode:@"FACE_STICKER_ERROR"
+                               message:exception.reason
+                               details:exception.userInfo]);
+  }
+}
+
+- (void)handleSetFaceStickerPlacement:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED"
+                               message:@"SDK must be initialized"
+                               details:nil]);
+    return;
+  }
+
+  SEL selector = @selector(setFaceStickerAnchor:offsetX:offsetY:scale:rotationDeg:opacity:);
+  if (![self faceStickerSelectorAvailable:selector result:result]) {
+    return;
+  }
+
+  NSInteger anchor = [call.arguments[@"anchor"] integerValue];
+  float offsetX = [call.arguments[@"offsetX"] floatValue];
+  float offsetY = [call.arguments[@"offsetY"] floatValue];
+  float scale = [call.arguments[@"scale"] floatValue];
+  float rotationDeg = [call.arguments[@"rotationDeg"] floatValue];
+  NSNumber *opacityNumber = call.arguments[@"opacity"];
+  float opacity = opacityNumber ? MIN(MAX([opacityNumber floatValue], 0.0f), 1.0f) : 1.0f;
+
+  @try {
+    // Cheap by design: the texture stays uploaded, only placement moves. A
+    // no-op inside the SDK when no sticker is active.
+    [[NosmaiSDK sharedInstance] setFaceStickerAnchor:anchor
+                                             offsetX:offsetX
+                                             offsetY:offsetY
+                                               scale:scale
+                                         rotationDeg:rotationDeg
+                                             opacity:opacity];
+    result(nil);
+  } @catch (NSException *exception) {
+    result([FlutterError errorWithCode:@"FACE_STICKER_ERROR"
+                               message:exception.reason
+                               details:exception.userInfo]);
+  }
+}
+
+- (void)handleClearFaceSticker:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED"
+                               message:@"SDK must be initialized"
+                               details:nil]);
+    return;
+  }
+
+  NosmaiSDK *sdk = [NosmaiSDK sharedInstance];
+  if (![sdk respondsToSelector:@selector(clearFaceSticker)]) {
+    // Nothing could have been applied, so the clear is trivially satisfied.
+    result(nil);
+    return;
+  }
+
+  @try {
+    [sdk clearFaceSticker];
+    [self emitPipelineStateToFlutter];
+    result(nil);
+  } @catch (NSException *exception) {
+    result([FlutterError errorWithCode:@"CLEAR_FACE_STICKER_ERROR"
+                               message:exception.reason
+                               details:exception.userInfo]);
+  }
+}
+
+- (void)handleIsFaceStickerActive:(FlutterMethodCall*)call result:(FlutterResult)result {
+  result(@([self faceStickerActive]));
 }
 
 @end

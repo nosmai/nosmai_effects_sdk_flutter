@@ -57,11 +57,14 @@ class NosmaiFilter {
 
   /// Download/cache identifier used by the cloud-filter APIs.
   ///
-  /// Older native bridges returned the catalog record UUID as [id] and the
-  /// downloadable package identifier separately as `filterId`. Keep both so
-  /// callers can safely use [cloudIdentifier] without losing the record ID.
+  /// A cloud catalog record carries two identifiers: a server record UUID and
+  /// the downloadable package id. Only the package id is accepted by
+  /// `downloadCloudFilter` / `removeCloudFilter`, so for a cloud filter both
+  /// this field and [id] hold it, and the record UUID is not surfaced (Android
+  /// never reports one). A local filter has no package id: this stays null
+  /// while [id] holds the manifest id or folder name. Prefer [cloudIdentifier],
+  /// which picks the right one either way.
   final String? filterId;
-  final String? backendId;
   final String name;
   final String description;
   final String displayName;
@@ -89,7 +92,6 @@ class NosmaiFilter {
   const NosmaiFilter({
     required this.id,
     this.filterId,
-    this.backendId,
     required this.name,
     required this.description,
     required this.displayName,
@@ -241,14 +243,15 @@ class NosmaiFilter {
     }
 
     final filterId = _stringOrNull(map['filterId']);
-    final backendId = _stringOrNull(map['backendId'] ?? map['id']);
+    // Last-resort source for [id] only, never exposed: a cloud map carries the
+    // catalog record UUID here, a local map its manifest id or folder name.
+    final recordId = _stringOrNull(map['id']);
 
     return NosmaiFilter(
       // Public `id` remains directly usable with downloadCloudFilter, which
       // has always documented this object as its source of identifiers.
-      id: filterId ?? backendId ?? map['name']?.toString() ?? '',
+      id: filterId ?? recordId ?? map['name']?.toString() ?? '',
       filterId: filterId,
-      backendId: backendId,
       name: map['name']?.toString() ?? '',
       description: map['description']?.toString() ?? '',
       displayName:
@@ -278,7 +281,6 @@ class NosmaiFilter {
     return {
       'id': id,
       'filterId': filterId,
-      'backendId': backendId,
       'name': name,
       'description': description,
       'displayName': displayName,
@@ -368,6 +370,16 @@ class NosmaiActiveEffects {
   final bool hasBeautyEffect;
   final bool hasBuiltInBeauty;
   final bool hasManualBackground;
+
+  /// True while a built-in face sticker holds the AR slot.
+  ///
+  /// A sticker leaves [activeEffectPath] null even though the slot is
+  /// occupied, so check this flag rather than the path.
+  final bool hasFaceSticker;
+
+  /// True while built-in hair colouring is enabled (a beauty effect; it does
+  /// not touch the AR slot).
+  final bool hasHairColoring;
   final NosmaiFilter? activeFilter;
   final NosmaiFilter? activeEffect;
 
@@ -385,6 +397,8 @@ class NosmaiActiveEffects {
     required this.hasBeautyEffect,
     this.hasBuiltInBeauty = false,
     required this.hasManualBackground,
+    this.hasFaceSticker = false,
+    this.hasHairColoring = false,
     this.activeFilter,
     this.activeEffect,
   });
@@ -437,6 +451,8 @@ class NosmaiActiveEffects {
       hasManualBackground: _parseBoolSafely(
         map['hasManualBackground'] ?? map['hasManualBackgroundConfig'],
       ),
+      hasFaceSticker: _parseBoolSafely(map['isFaceStickerActive']),
+      hasHairColoring: _parseBoolSafely(map['isHairColoringActive']),
       activeFilter: parseFilter(map['activeFilterInfo'] ?? map['activeFilter']),
       activeEffect: parseFilter(map['activeEffectInfo'] ?? map['activeEffect']),
     );
@@ -451,6 +467,9 @@ class NosmaiActiveEffects {
   bool get hasAnyBeauty => hasBeautyEffect || hasBuiltInBeauty;
   bool get hasFilterPackage => activeFilterPath != null;
   bool get hasArPackage => activeEffectPath != null;
+
+  /// True when anything holds the AR slot: a `.nosmai` package or a sticker.
+  bool get isArSlotOccupied => hasArPackage || hasFaceSticker;
   bool get hasBackgroundPackage => activeBackgroundPath != null;
   String? get activeBackgroundPackagePath => activeBackgroundPath;
   bool get backgroundActive => hasBackground;
@@ -482,6 +501,8 @@ class NosmaiActiveEffects {
       'hasBuiltInBeauty': hasBuiltInBeauty,
       'hasManualBackground': hasManualBackground,
       'hasManualBackgroundConfig': hasManualBackground,
+      'isFaceStickerActive': hasFaceSticker,
+      'isHairColoringActive': hasHairColoring,
       'activeFilterInfo': activeFilter?.toMap(),
       'activeEffectInfo': activeEffect?.toMap(),
     };

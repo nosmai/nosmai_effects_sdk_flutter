@@ -1,3 +1,6 @@
+import 'dart:ui' show Color;
+import 'dart:typed_data';
+
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import '../types/enums.dart';
 import '../types/models.dart';
@@ -204,11 +207,6 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('getAllLocalFilters() has not been implemented.');
   }
 
-  /// Development-only debug discovery for bundled loose .nosmai filters.
-  Future<List<dynamic>> getDebugFilters({NosmaiLocalFilterType? type}) {
-    throw UnimplementedError('getDebugFilters() has not been implemented.');
-  }
-
   /// Get local effects (AR effects, masks, etc.) with filterType "effect"
   Future<List<dynamic>> getLocalEffects() {
     throw UnimplementedError('getLocalEffects() has not been implemented.');
@@ -314,6 +312,49 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
   Future<void> applyRGBFilter(
       {required double red, required double green, required double blue}) {
     throw UnimplementedError('applyRGBFilter() has not been implemented.');
+  }
+
+  Future<void> applyContourAndHighlighter({
+    double contour = 0,
+    double highlighter = 0,
+  }) async {
+    throw UnimplementedError(
+      'applyContourAndHighlighter() has not been implemented.',
+    );
+  }
+
+  Future<void> applyFreckles(double quantity) async {
+    throw UnimplementedError('applyFreckles() has not been implemented.');
+  }
+
+  Future<void> applyFoundation({
+    NosmaiFoundationShade shade = NosmaiFoundationShade.honey,
+    Color? color,
+    double coverage = 0.5,
+  }) async {
+    throw UnimplementedError('applyFoundation() has not been implemented.');
+  }
+
+  Future<void> removeFoundation() async {
+    throw UnimplementedError('removeFoundation() has not been implemented.');
+  }
+
+  Future<bool> prepareBeautyFilters() {
+    throw UnimplementedError(
+      'prepareBeautyFilters() has not been implemented.',
+    );
+  }
+
+  Future<bool> isBeautyPrepared() {
+    throw UnimplementedError('isBeautyPrepared() has not been implemented.');
+  }
+
+  Future<void> setBeautyVisible(bool visible) async {
+    throw UnimplementedError('setBeautyVisible() has not been implemented.');
+  }
+
+  Future<bool> isBeautyVisible() async {
+    throw UnimplementedError('isBeautyVisible() has not been implemented.');
   }
 
   Future<void> applySkinSmoothing(double level) {
@@ -471,12 +512,51 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
         'clearBackgroundSegmentation() has not been implemented.');
   }
 
+  // Face Sticker Methods
+
+  /// Pin encoded image bytes (PNG, JPEG or animated GIF) to the tracked face.
+  Future<bool> setFaceSticker(
+    Uint8List imageData, {
+    NosmaiFaceStickerAnchor anchor = NosmaiFaceStickerAnchor.center,
+    double offsetX = 0.0,
+    double offsetY = 0.0,
+    double scale = 0.0,
+    double rotationDeg = 0.0,
+    double opacity = 1.0,
+  }) {
+    throw UnimplementedError('setFaceSticker() has not been implemented.');
+  }
+
+  /// Move, resize, rotate or fade the live face sticker.
+  Future<void> setFaceStickerPlacement({
+    required NosmaiFaceStickerAnchor anchor,
+    double offsetX = 0.0,
+    double offsetY = 0.0,
+    double scale = 0.0,
+    double rotationDeg = 0.0,
+    double opacity = 1.0,
+  }) {
+    throw UnimplementedError(
+        'setFaceStickerPlacement() has not been implemented.');
+  }
+
+  /// Remove the face sticker.
+  Future<void> clearFaceSticker() {
+    throw UnimplementedError('clearFaceSticker() has not been implemented.');
+  }
+
+  /// True while a face sticker holds the AR slot.
+  Future<bool> isFaceStickerActive() {
+    throw UnimplementedError('isFaceStickerActive() has not been implemented.');
+  }
+
   // Lipstick Methods
 
   /// Apply lipstick with style
   Future<bool> applyLipstick({
     required NosmaiLipstickStyle style,
     double intensity = 0.5,
+    Color? color,
   }) {
     throw UnimplementedError('applyLipstick() has not been implemented.');
   }
@@ -484,7 +564,8 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
   /// Set lipstick intensity
   Future<void> setLipstickIntensity(double intensity) {
     throw UnimplementedError(
-        'setLipstickIntensity() has not been implemented.');
+      'setLipstickIntensity() has not been implemented.',
+    );
   }
 
   /// Remove lipstick effect
@@ -508,6 +589,7 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
   Future<bool> applyEyeshadow({
     required NosmaiEyeshadowStyle style,
     double intensity = 0.5,
+    Color? color,
   }) {
     throw UnimplementedError('applyEyeshadow() has not been implemented.');
   }
@@ -534,6 +616,7 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
   Future<bool> applyBlusher({
     required NosmaiBlusherStyle style,
     double intensity = 0.5,
+    Color? color,
   }) {
     throw UnimplementedError('applyBlusher() has not been implemented.');
   }
@@ -584,6 +667,7 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
   Future<bool> applyEyebrow({
     required NosmaiEyebrowStyle style,
     double intensity = 0.5,
+    Color? color,
   }) {
     throw UnimplementedError('applyEyebrow() has not been implemented.');
   }
@@ -654,6 +738,35 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
   /// Remove eye coloring effect
   Future<void> removeEyeColoring() {
     throw UnimplementedError('removeEyeColoring() has not been implemented.');
+  }
+
+  // Hair Coloring Methods
+
+  /// Enable hair colouring with RGB values (0.0 - 1.0) and intensity
+  Future<bool> setHairColor({
+    required double r,
+    required double g,
+    required double b,
+    double intensity = 0.6,
+  }) {
+    throw UnimplementedError('setHairColor() has not been implemented.');
+  }
+
+  /// Set hair colour intensity (0.0 - 1.0)
+  Future<void> setHairColorIntensity(double intensity) {
+    throw UnimplementedError(
+        'setHairColorIntensity() has not been implemented.');
+  }
+
+  /// Remove hair colouring
+  Future<void> removeHairColoring() {
+    throw UnimplementedError('removeHairColoring() has not been implemented.');
+  }
+
+  /// Whether hair colouring is enabled
+  Future<bool> isHairColoringActive() {
+    throw UnimplementedError(
+        'isHairColoringActive() has not been implemented.');
   }
 
   // Utility Methods

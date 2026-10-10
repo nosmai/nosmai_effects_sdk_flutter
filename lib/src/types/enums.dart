@@ -3,6 +3,8 @@
 /// This file contains all the enumeration types used by the Nosmai Flutter plugin.
 library;
 
+import 'dart:ui' show Color;
+
 /// Camera position enumeration
 enum NosmaiCameraPosition { front, back }
 
@@ -399,4 +401,58 @@ enum NosmaiEyebrowStyle {
         return NosmaiEyebrowStyle.natural;
     }
   }
+}
+
+/// Where a face sticker sits before any offset is applied.
+///
+/// Every value is a tracked landmark, so a [leftEye] sticker lands on the eye
+/// of a wide face and a narrow face alike. Left and right are the SUBJECT's.
+/// The landmark indices behind these names live inside the native engine.
+///
+/// These integer ids are part of the native cross-platform ABI (they match
+/// Android's `NosmaiEffects.FaceStickerAnchor` ordinals and iOS's
+/// `NosmaiFaceStickerAnchor`): append only, never reorder.
+enum NosmaiFaceStickerAnchor {
+  center(0, 0.50),
+  forehead(1, 0.60),
+  aboveHead(2, 0.80),
+  leftEye(3, 0.25),
+  rightEye(4, 0.25),
+
+  /// Midpoint of both eyes, sized to span them. Sunglasses, masks.
+  eyes(5, 0.90),
+  nose(6, 0.40),
+  mouth(7, 0.40),
+  chin(8, 0.35);
+
+  /// Wire value sent to the native layer.
+  final int value;
+
+  /// Width, as a multiple of face width, that looks right for this anchor.
+  /// Passing `scale: 0` to an apply or placement call selects this.
+  final double defaultScale;
+
+  const NosmaiFaceStickerAnchor(this.value, this.defaultScale);
+
+  /// Create from the native integer value; unknown values map to [center].
+  static NosmaiFaceStickerAnchor fromValue(int? value) {
+    for (final anchor in NosmaiFaceStickerAnchor.values) {
+      if (anchor.value == value) return anchor;
+    }
+    return NosmaiFaceStickerAnchor.center;
+  }
+}
+
+enum NosmaiFoundationShade {
+  ivory(0xFFF1D6BC),
+  beige(0xFFE4BA9C),
+  sand(0xFFD5A080),
+  honey(0xFFC2916E),
+  caramel(0xFFA97551),
+  mocha(0xFF80543A),
+  deep(0xFF593C2D);
+
+  final int argb;
+  const NosmaiFoundationShade(this.argb);
+  Color get color => Color(argb);
 }

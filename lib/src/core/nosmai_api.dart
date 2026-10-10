@@ -646,35 +646,6 @@ class NosmaiFlutter {
     }
   }
 
-  /// Development-only discovery for bundled debug .nosmai filters.
-  ///
-  /// This is useful while testing loose `.nosmai` assets, usually under
-  /// `assets/filters/`. It does not require the production manifest/preview
-  /// folder structure.
-  ///
-  /// Pass `type: null` to receive all debug filters. Production apps should use
-  /// [getLocalFilters], [getLocalEffects], [getLocalBackgrounds],
-  /// [getLocalBeautyEffects], [getLocalGames], or [getAllLocalFilters].
-  Future<List<NosmaiFilter>> getDebugFilters({
-    NosmaiLocalFilterType? type,
-  }) async {
-    _checkInitialized();
-    try {
-      final List<dynamic> filters =
-          await NosmaiFlutterPlatform.instance.getDebugFilters(type: type);
-      return filters
-          .map((filter) =>
-              NosmaiFilter.fromMap(Map<String, dynamic>.from(filter)))
-          .toList();
-    } on PlatformException catch (e) {
-      throw NosmaiError.filter(
-        type: _parseErrorType(e.code),
-        message: e.message ?? 'Failed to get debug filters',
-        details: e.details?.toString(),
-      );
-    }
-  }
-
   /// Get list of local AR effects (masks, 3D overlays, etc.)
   ///
   /// Returns only filters with filterType "effect".
@@ -1178,6 +1149,65 @@ class NosmaiFlutter {
         .saveVideoToGallery(videoPath, name: name);
   }
 
+  Future<void> applyContourAndHighlighter({
+    double contour = 0,
+    double highlighter = 0,
+  }) async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance.applyContourAndHighlighter(
+      contour: _beautyStrength(contour, 2),
+      highlighter: _beautyStrength(highlighter, 2),
+    );
+  }
+
+  Future<void> applyFreckles(double quantity) async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance.applyFreckles(
+      _beautyStrength(quantity, 1),
+    );
+  }
+
+  Future<void> applyFoundation({
+    NosmaiFoundationShade shade = NosmaiFoundationShade.honey,
+    Color? color,
+    double coverage = 0.5,
+  }) async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance.applyFoundation(
+      shade: shade,
+      color: color,
+      coverage: _beautyStrength(coverage, 1),
+    );
+  }
+
+  Future<void> removeFoundation() async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance.removeFoundation();
+  }
+
+  Future<bool> prepareBeautyFilters() async {
+    _checkInitialized();
+    return await NosmaiFlutterPlatform.instance.prepareBeautyFilters();
+  }
+
+  Future<bool> isBeautyPrepared() async {
+    if (!_isInitialized || _isDisposed) return false;
+    return await NosmaiFlutterPlatform.instance.isBeautyPrepared();
+  }
+
+  Future<void> setBeautyVisible(bool visible) async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance.setBeautyVisible(visible);
+  }
+
+  Future<bool> isBeautyVisible() async {
+    _checkInitialized();
+    return await NosmaiFlutterPlatform.instance.isBeautyVisible();
+  }
+
+  double _beautyStrength(double value, double maximum) =>
+      value.isFinite ? value.clamp(0.0, maximum).toDouble() : 0.0;
+
   // Built-in Filter Methods
   // All beauty/effect strengths use 0.0 (off) to 1.0 (maximum) on Flutter,
   // Android and iOS. Values are clamped; 0..10/0..100 are not auto-detected.
@@ -1432,6 +1462,194 @@ class NosmaiFlutter {
     }
   }
 
+  // Face Sticker Methods
+
+  /// Pin an image or an animated GIF to the tracked face.
+  ///
+  /// The sticker rides the same renderer as `.nosmai` AR face effects, so it
+  /// follows head movement, roll and distance with no per-frame work from the
+  /// caller. It shares the AR slot with `.nosmai` effects: applying a sticker
+  /// replaces an active effect, and [applyEffect] replaces the sticker. Built-in
+  /// beauty and makeup are cleared as well, exactly as when an effect is
+  /// applied. Remove it with [clearFaceSticker].
+  ///
+  /// [imageData] - The raw bytes of a PNG, JPEG or GIF file. An animated GIF
+  /// plays on the face at its own timing, looping; the SDK handles the frames.
+  /// Transparent margins are trimmed automatically.
+  /// [anchor] - Landmark the sticker is measured from.
+  /// [offsetX] - Fraction of face width; positive toward the subject's other
+  /// cheek.
+  /// [offsetY] - Fraction of face height; positive toward the forehead.
+  /// [scale] - Width as a multiple of face width; `0` (default) uses the
+  /// anchor's [NosmaiFaceStickerAnchor.defaultScale].
+  /// [rotationDeg] - Clockwise on screen.
+  /// [opacity] - 0..1.
+  ///
+  /// Returns true if the sticker is on the face, false otherwise.
+  ///
+  /// Example:
+  /// ```dart
+  /// final bytes = await rootBundle.load('assets/stickers/heart.gif');
+  /// await nosmai.setFaceSticker(
+  ///   bytes.buffer.asUint8List(),
+  ///   anchor: NosmaiFaceStickerAnchor.aboveHead,
+  /// );
+  /// ```
+  Future<bool> setFaceSticker(
+    Uint8List imageData, {
+    NosmaiFaceStickerAnchor anchor = NosmaiFaceStickerAnchor.center,
+    double offsetX = 0.0,
+    double offsetY = 0.0,
+    double scale = 0.0,
+    double rotationDeg = 0.0,
+    double opacity = 1.0,
+  }) async {
+    _checkInitialized();
+    if (imageData.isEmpty) {
+      throw NosmaiError.general(
+        type: NosmaiErrorType.invalidParameter,
+        message: 'Face sticker image data is empty',
+      );
+    }
+    try {
+      return await NosmaiFlutterPlatform.instance.setFaceSticker(
+        imageData,
+        anchor: anchor,
+        offsetX: offsetX,
+        offsetY: offsetY,
+        scale: scale,
+        rotationDeg: rotationDeg,
+        opacity: opacity.clamp(0.0, 1.0),
+      );
+    } on PlatformException catch (e) {
+      throw NosmaiError.general(
+        type: _parseErrorType(e.code),
+        message: e.message ?? 'Failed to apply face sticker',
+        details: e.details?.toString(),
+      );
+    } catch (e) {
+      _errorController?.add(NosmaiError.general(
+        type: NosmaiErrorType.platformError,
+        message: 'Failed to apply face sticker',
+        details: e.toString(),
+        originalError: e,
+      ));
+      rethrow;
+    }
+  }
+
+  /// [setFaceSticker] from a bundled Flutter asset (PNG, JPEG or GIF).
+  ///
+  /// Example:
+  /// ```dart
+  /// await nosmai.setFaceStickerAsset(
+  ///   'assets/stickers/heart.gif',
+  ///   anchor: NosmaiFaceStickerAnchor.forehead,
+  /// );
+  /// ```
+  Future<bool> setFaceStickerAsset(
+    String assetPath, {
+    NosmaiFaceStickerAnchor anchor = NosmaiFaceStickerAnchor.center,
+    double offsetX = 0.0,
+    double offsetY = 0.0,
+    double scale = 0.0,
+    double rotationDeg = 0.0,
+    double opacity = 1.0,
+  }) async {
+    _checkInitialized();
+    final data = await rootBundle.load(assetPath);
+    return setFaceSticker(
+      data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      anchor: anchor,
+      offsetX: offsetX,
+      offsetY: offsetY,
+      scale: scale,
+      rotationDeg: rotationDeg,
+      opacity: opacity,
+    );
+  }
+
+  /// Move, resize, rotate or fade the live face sticker.
+  ///
+  /// Cheap enough to call continuously from a gesture or slider: the image is
+  /// already uploaded and is never re-decoded, and an animated sticker keeps
+  /// playing. No-op when no sticker is active, so it can never disturb an
+  /// applied `.nosmai` effect.
+  ///
+  /// Pass the **same [anchor] the sticker was applied with**: the offset is
+  /// measured from the anchor, so an eye sticker moved with `center` would
+  /// jump back to the middle of the face.
+  ///
+  /// Example:
+  /// ```dart
+  /// await nosmai.setFaceStickerPlacement(
+  ///   anchor: NosmaiFaceStickerAnchor.nose,
+  ///   offsetY: 0.05, // a little above the tip
+  ///   scale: 0.4,
+  /// );
+  /// ```
+  Future<void> setFaceStickerPlacement({
+    required NosmaiFaceStickerAnchor anchor,
+    double offsetX = 0.0,
+    double offsetY = 0.0,
+    double scale = 0.0,
+    double rotationDeg = 0.0,
+    double opacity = 1.0,
+  }) async {
+    _checkInitialized();
+    try {
+      await NosmaiFlutterPlatform.instance.setFaceStickerPlacement(
+        anchor: anchor,
+        offsetX: offsetX,
+        offsetY: offsetY,
+        scale: scale,
+        rotationDeg: rotationDeg,
+        opacity: opacity.clamp(0.0, 1.0),
+      );
+    } on PlatformException catch (e) {
+      throw NosmaiError.general(
+        type: _parseErrorType(e.code),
+        message: e.message ?? 'Failed to update face sticker placement',
+        details: e.details?.toString(),
+      );
+    }
+  }
+
+  /// Remove the face sticker. No-op when no sticker is active.
+  ///
+  /// [clearAREffect], [removeAllFilters] and [clearAll] remove it too.
+  ///
+  /// Example:
+  /// ```dart
+  /// await nosmai.clearFaceSticker();
+  /// ```
+  Future<void> clearFaceSticker() async {
+    _checkInitialized();
+    try {
+      await NosmaiFlutterPlatform.instance.clearFaceSticker();
+    } on PlatformException catch (e) {
+      throw NosmaiError.general(
+        type: _parseErrorType(e.code),
+        message: e.message ?? 'Failed to clear face sticker',
+        details: e.details?.toString(),
+      );
+    }
+  }
+
+  /// True while a face sticker holds the AR slot.
+  ///
+  /// While it does, [NosmaiActiveEffects.activeEffectPath] is null even though
+  /// the slot is occupied; use this, or
+  /// [NosmaiActiveEffects.hasFaceSticker] from [onActiveEffectsChanged].
+  Future<bool> isFaceStickerActive() async {
+    _checkInitialized();
+    try {
+      return await NosmaiFlutterPlatform.instance.isFaceStickerActive();
+    } on PlatformException catch (_) {
+      return false;
+    }
+  }
+
   // Lipstick Methods
 
   /// Apply lipstick with style and color index
@@ -1454,12 +1672,14 @@ class NosmaiFlutter {
   Future<bool> applyLipstick({
     required NosmaiLipstickStyle style,
     double intensity = 0.5,
+    Color? color,
   }) async {
     _checkInitialized();
     try {
       return await NosmaiFlutterPlatform.instance.applyLipstick(
         style: style,
-        intensity: intensity.clamp(0.0, 1.0),
+        intensity: _beautyStrength(intensity, 2.0),
+        color: color,
       );
     } on PlatformException catch (e) {
       throw NosmaiError.general(
@@ -1468,12 +1688,14 @@ class NosmaiFlutter {
         details: e.details?.toString(),
       );
     } catch (e) {
-      _errorController?.add(NosmaiError.general(
-        type: NosmaiErrorType.platformError,
-        message: 'Failed to apply lipstick',
-        details: e.toString(),
-        originalError: e,
-      ));
+      _errorController?.add(
+        NosmaiError.general(
+          type: NosmaiErrorType.platformError,
+          message: 'Failed to apply lipstick',
+          details: e.toString(),
+          originalError: e,
+        ),
+      );
       rethrow;
     }
   }
@@ -1491,8 +1713,9 @@ class NosmaiFlutter {
   Future<void> setLipstickIntensity(double intensity) async {
     _checkInitialized();
     try {
-      await NosmaiFlutterPlatform.instance
-          .setLipstickIntensity(intensity.clamp(0.0, 1.0));
+      await NosmaiFlutterPlatform.instance.setLipstickIntensity(
+        _beautyStrength(intensity, 2.0),
+      );
     } on PlatformException catch (e) {
       throw NosmaiError.general(
         type: _parseErrorType(e.code),
@@ -1586,12 +1809,14 @@ class NosmaiFlutter {
   Future<bool> applyEyeshadow({
     required NosmaiEyeshadowStyle style,
     double intensity = 0.5,
+    Color? color,
   }) async {
     _checkInitialized();
     try {
       return await NosmaiFlutterPlatform.instance.applyEyeshadow(
         style: style,
-        intensity: intensity.clamp(0.0, 1.0),
+        intensity: _beautyStrength(intensity, 1.0),
+        color: color,
       );
     } on PlatformException catch (e) {
       throw NosmaiError.general(
@@ -1600,12 +1825,14 @@ class NosmaiFlutter {
         details: e.details?.toString(),
       );
     } catch (e) {
-      _errorController?.add(NosmaiError.general(
-        type: NosmaiErrorType.platformError,
-        message: 'Failed to apply eyeshadow',
-        details: e.toString(),
-        originalError: e,
-      ));
+      _errorController?.add(
+        NosmaiError.general(
+          type: NosmaiErrorType.platformError,
+          message: 'Failed to apply eyeshadow',
+          details: e.toString(),
+          originalError: e,
+        ),
+      );
       rethrow;
     }
   }
@@ -1670,12 +1897,14 @@ class NosmaiFlutter {
   Future<bool> applyBlusher({
     required NosmaiBlusherStyle style,
     double intensity = 0.5,
+    Color? color,
   }) async {
     _checkInitialized();
     try {
       return await NosmaiFlutterPlatform.instance.applyBlusher(
         style: style,
-        intensity: intensity.clamp(0.0, 1.0),
+        intensity: _beautyStrength(intensity, 2.0),
+        color: color,
       );
     } on PlatformException catch (e) {
       throw NosmaiError.general(
@@ -1684,12 +1913,14 @@ class NosmaiFlutter {
         details: e.details?.toString(),
       );
     } catch (e) {
-      _errorController?.add(NosmaiError.general(
-        type: NosmaiErrorType.platformError,
-        message: 'Failed to apply blusher',
-        details: e.toString(),
-        originalError: e,
-      ));
+      _errorController?.add(
+        NosmaiError.general(
+          type: NosmaiErrorType.platformError,
+          message: 'Failed to apply blusher',
+          details: e.toString(),
+          originalError: e,
+        ),
+      );
       rethrow;
     }
   }
@@ -1700,8 +1931,9 @@ class NosmaiFlutter {
   Future<void> setBlusherIntensity(double intensity) async {
     _checkInitialized();
     try {
-      await NosmaiFlutterPlatform.instance
-          .setBlusherIntensity(intensity.clamp(0.0, 1.0));
+      await NosmaiFlutterPlatform.instance.setBlusherIntensity(
+        _beautyStrength(intensity, 2.0),
+      );
     } on PlatformException catch (e) {
       throw NosmaiError.general(
         type: _parseErrorType(e.code),
@@ -1838,12 +2070,14 @@ class NosmaiFlutter {
   Future<bool> applyEyebrow({
     required NosmaiEyebrowStyle style,
     double intensity = 0.5,
+    Color? color,
   }) async {
     _checkInitialized();
     try {
       return await NosmaiFlutterPlatform.instance.applyEyebrow(
         style: style,
-        intensity: intensity.clamp(0.0, 1.0),
+        intensity: _beautyStrength(intensity, 1.0),
+        color: color,
       );
     } on PlatformException catch (e) {
       throw NosmaiError.general(
@@ -1852,12 +2086,14 @@ class NosmaiFlutter {
         details: e.details?.toString(),
       );
     } catch (e) {
-      _errorController?.add(NosmaiError.general(
-        type: NosmaiErrorType.platformError,
-        message: 'Failed to apply eyebrow',
-        details: e.toString(),
-        originalError: e,
-      ));
+      _errorController?.add(
+        NosmaiError.general(
+          type: NosmaiErrorType.platformError,
+          message: 'Failed to apply eyebrow',
+          details: e.toString(),
+          originalError: e,
+        ),
+      );
       rethrow;
     }
   }
@@ -2126,6 +2362,90 @@ class NosmaiFlutter {
         message: e.message ?? 'Failed to remove eye coloring',
         details: e.details?.toString(),
       );
+    }
+  }
+
+  // Hair Coloring Methods
+
+  /// Enable hair colouring with the given [color] and [intensity].
+  ///
+  /// The hair matte comes from the SDK's hair segmentation model, which runs
+  /// on its own thread; the first coloured frame appears once the model has
+  /// warmed up. Calling this again only changes the colour / intensity.
+  ///
+  /// [intensity] - 0.0 (invisible) to 1.0 (full), default 0.6
+  ///
+  /// Example:
+  /// ```dart
+  /// await nosmai.setHairColor(const Color(0xFFB35933)); // auburn
+  /// await nosmai.setHairColor(Colors.blue, intensity: 0.8);
+  /// ```
+  Future<bool> setHairColor(Color color, {double intensity = 0.6}) async {
+    _checkInitialized();
+    try {
+      return await NosmaiFlutterPlatform.instance.setHairColor(
+        r: color.r,
+        g: color.g,
+        b: color.b,
+        intensity: intensity.clamp(0.0, 1.0),
+      );
+    } on PlatformException catch (e) {
+      throw NosmaiError.general(
+        type: _parseErrorType(e.code),
+        message: e.message ?? 'Failed to set hair color',
+        details: e.details?.toString(),
+      );
+    } catch (e) {
+      _errorController?.add(NosmaiError.general(
+        type: NosmaiErrorType.platformError,
+        message: 'Failed to set hair color',
+        details: e.toString(),
+        originalError: e,
+      ));
+      rethrow;
+    }
+  }
+
+  /// Set hair colour intensity
+  ///
+  /// [intensity] - 0.0 (invisible) to 1.0 (full)
+  Future<void> setHairColorIntensity(double intensity) async {
+    _checkInitialized();
+    try {
+      await NosmaiFlutterPlatform.instance
+          .setHairColorIntensity(intensity.clamp(0.0, 1.0));
+    } on PlatformException catch (e) {
+      throw NosmaiError.general(
+        type: _parseErrorType(e.code),
+        message: e.message ?? 'Failed to set hair color intensity',
+        details: e.details?.toString(),
+      );
+    }
+  }
+
+  /// Remove the hair colouring effect. The segmentation model goes idle.
+  Future<void> removeHairColoring() async {
+    _checkInitialized();
+    try {
+      await NosmaiFlutterPlatform.instance.removeHairColoring();
+    } on PlatformException catch (e) {
+      throw NosmaiError.general(
+        type: _parseErrorType(e.code),
+        message: e.message ?? 'Failed to remove hair coloring',
+        details: e.details?.toString(),
+      );
+    }
+  }
+
+  /// Whether hair colouring is currently enabled.
+  ///
+  /// Returns false on a native binary that predates the hair API.
+  Future<bool> isHairColoringActive() async {
+    _checkInitialized();
+    try {
+      return await NosmaiFlutterPlatform.instance.isHairColoringActive();
+    } on PlatformException {
+      return false;
     }
   }
 
