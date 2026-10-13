@@ -2707,14 +2707,19 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             val b = normalizedUnit(call.argument<Number>("b"), 1.0)
             val intensity = normalizedUnit(call.argument<Number>("intensity"), 0.5)
 
-            com.nosmai.effect.internal.Nosmai.enableEyeColoringFilter(true)
-            com.nosmai.effect.internal.Nosmai.setEyeColor(r, g, b)
-            com.nosmai.effect.internal.Nosmai.setEyeColorIntensity(intensity)
+            // Use the production lens chain; the legacy eye-color path replaces
+            // source targets without reconnecting the GPU preview terminal.
+            NosmaiBeauty.applyEyeLens(r, g, b, intensity)
 
             result.success(true)
         } catch (t: Throwable) {
             NosmaiLog.e(TAG, "setEyeColor error: ${t.message}", t)
-            result.success(false)
+            val code = when (t) {
+                is LinkageError -> "SDK_UPGRADE_REQUIRED"
+                is IllegalStateException -> if (t.message?.contains("license", ignoreCase = true) == true) "INVALID_LICENSE" else "FILTER_ERROR"
+                else -> "FILTER_ERROR"
+            }
+            result.error(code, t.message, null)
         }
     }
 
@@ -2722,14 +2727,14 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
         if (!requireSdkReady(result)) return
         val intensity = normalizedUnit(call.argument<Number>("intensity"), 0.5)
         executeBeautyFilter("SetEyeColorIntensity", {
-            com.nosmai.effect.internal.Nosmai.setEyeColorIntensity(intensity)
+            NosmaiBeauty.setEyeLensIntensity(intensity)
         }, result)
     }
 
     private fun handleRemoveEyeColoring(result: Result) {
         if (!requireSdkReady(result)) return
         executeBeautyFilter("RemoveEyeColoring", {
-            com.nosmai.effect.internal.Nosmai.enableEyeColoringFilter(false)
+            NosmaiBeauty.removeEyeLens()
         }, result)
     }
 

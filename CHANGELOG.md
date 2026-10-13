@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.1
+
+- Fixed Android eye-colour controls to use the production lens pipeline.
+- Improved eye-colour preview stability and error reporting on Android.
+
 ## 2.0.0
 
 - Updated Android and iOS native dependencies to Nosmai Effects SDK 3.0.6.

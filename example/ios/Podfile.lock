@@ -2,7 +2,7 @@ PODS:
   - Flutter (1.0.0)
   - integration_test (0.0.1):
     - Flutter
-  - nosmai_effects_sdk (2.0.0):
+  - nosmai_effects_sdk (2.0.1):
     - Flutter
     - NosmaiCameraSDK (~> 3.0.6)
   - NosmaiCameraSDK (3.0.6)
@@ -31,7 +31,7 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
-  nosmai_effects_sdk: c1fdc33c1d212ef8a9f71bb82ba758255c399b73
+  nosmai_effects_sdk: 7df9dbabc0560d3fef94790fbb838c3c7449294f
   NosmaiCameraSDK: e12999550865089ebf5c5809c52bbc05ffa3242b
   permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
 
