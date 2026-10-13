@@ -17,9 +17,10 @@ The iOS simulator is not supported. Use a physical ARM64 iOS device.
 
 ## Native SDK Setup
 
-iOS resolves `NosmaiCameraSDK 3.0.6` automatically through CocoaPods. Android
-resolves `nosmai-sdk-3.0.6.aar` from the official
-[Nosmai Effects SDK for Android v3.0.6 release](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.6).
+iOS resolves the stable `NosmaiCameraSDK 3.0.6` automatically through
+CocoaPods. This beta branch resolves `nosmai-sdk-3.0.7-beta.1.aar` on Android
+from the official
+[Nosmai Effects SDK for Android v3.0.7-beta.1 pre-release](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.7-beta.1).
 No local `.framework` or `.aar` file is required by the example application.
 
 The example's iOS `Podfile` also contains `permission_handler` macros for the

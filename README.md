@@ -188,10 +188,11 @@ could otherwise stop a newly-created preview.
 
 ## Native SDK distribution
 
-- Version `2.0.1` uses Android Effects SDK `3.0.6` from the official GitHub
-  release and resolves `NosmaiCameraSDK 3.0.6` through CocoaPods on iOS.
+- Beta version `2.0.2-beta.1` uses Android Effects SDK `3.0.7-beta.1` from the
+  official GitHub pre-release and continues to resolve the stable
+  `NosmaiCameraSDK 3.0.6` through CocoaPods on iOS.
 - The Flutter plugin resolves the Android AAR from
-  [Nosmai Effects SDK for Android releases](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.6);
+  [Nosmai Effects SDK for Android releases](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.7-beta.1);
   applications do not need to keep a local AAR in `android/app/libs`.
 - Native SDK binaries and licensed `.nosmai` assets are not bundled in the
   pub.dev package.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.2-beta.1
+
+- Updated the Android native dependency to Nosmai Effects SDK `3.0.7-beta.1`
+  for pre-release validation.
+- Improved Android beauty processing performance and frame-orientation
+  consistency without changing the public Flutter API.
+- Kept the iOS native dependency on the stable `3.0.6` release.
+
 ## 2.0.1
 
 - Fixed Android eye-colour controls to use the production lens pipeline.

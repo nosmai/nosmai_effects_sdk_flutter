@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'nosmai_effects_sdk'
-  s.version          = '2.0.1'
+  s.version          = '2.0.2-beta.1'
   s.summary          = 'Official Flutter plugin for Nosmai real-time AR, beauty effects, and camera games.'
   s.description      = <<-DESC
     Nosmai Effects SDK applies real-time AR effects, beauty filters, backgrounds,
