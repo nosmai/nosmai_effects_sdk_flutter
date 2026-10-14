@@ -17,6 +17,21 @@ class CameraStateNotifierImpl {
   final List<Function()> _detachedCallbacks = [];
   final List<Function()> _readyCallbacks = [];
   final List<Function()> _processingStoppedCallbacks = [];
+  final List<void Function(int, bool, String?)> _previewStateCallbacks = [];
+
+  void addPreviewStateCallback(void Function(int, bool, String?) callback) {
+    _previewStateCallbacks.add(callback);
+  }
+
+  void removePreviewStateCallback(void Function(int, bool, String?) callback) {
+    _previewStateCallbacks.remove(callback);
+  }
+
+  void notifyPreviewState(int textureId, bool visible, String? error) {
+    for (final callback in List.of(_previewStateCallbacks)) {
+      callback(textureId, visible, error);
+    }
+  }
 
   void addAttachedCallback(Function() callback) {
     _attachedCallbacks.add(callback);
@@ -171,6 +186,18 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
       case 'onCameraDetached':
         // Camera detached - notify camera preview widgets
         CameraStateNotifierImpl.instance.notifyCameraDetached();
+        break;
+      case 'onPreviewStateChanged':
+        final args = Map<Object?, Object?>.from(call.arguments as Map);
+        final textureId = args['textureId'];
+        final visible = args['visible'];
+        if (textureId is int && visible is bool) {
+          CameraStateNotifierImpl.instance.notifyPreviewState(
+            textureId,
+            visible,
+            args['error'] as String?,
+          );
+        }
         break;
       case 'onCameraReady':
         // Camera is ready for processing

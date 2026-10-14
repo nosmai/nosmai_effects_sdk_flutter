@@ -6,6 +6,19 @@ Add real-time AR effects, beauty filters, digital makeup, background replacement
 interactive camera games, camera capture, and cloud filters to Flutter
 applications through one SDK for Android and iOS.
 
+## Beta installation
+
+```yaml
+dependencies:
+  nosmai_effects_sdk:
+    git:
+      url: https://github.com/nosmai/nosmai_effects_sdk_flutter.git
+      ref: v2.0.2-beta.2
+```
+
+This prerelease is intended for physical-device integration testing and is not
+published on pub.dev.
+
 ## Managed cloud previews
 
 Use `NosmaiFilterPreview(filter: filter)` in filter tiles. It handles thumbnail
@@ -72,7 +85,7 @@ filter downloads.
 | --- | --- |
 | Android | API 24 or later, physical `arm64-v8a` or `armeabi-v7a` device |
 | iOS | iOS 15.0 or later, physical arm64 device |
-| Flutter | Flutter 3.22.0 or later, Dart 3.0.0 or later |
+| Flutter | Flutter 3.29.0 or later, Dart 3.0.0 or later |
 
 Camera preview, face tracking, recording, and performance should be tested on
 physical devices. The iOS simulator is not supported by the native Effects SDK.
@@ -208,10 +221,10 @@ could otherwise stop a newly-created preview.
 
 ## Native SDK distribution
 
-- Version `2.0.1` uses Android Effects SDK `3.0.6` from the official GitHub
+- Version `2.0.2-beta.2` uses Android Effects SDK `3.0.7-beta.2` from the official GitHub
   release and resolves `NosmaiCameraSDK 3.0.6` through CocoaPods on iOS.
 - The Flutter plugin resolves the Android AAR from
-  [Nosmai Effects SDK for Android releases](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.6);
+  [Nosmai Effects SDK for Android releases](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.7-beta.2);
   applications do not need to keep a local AAR in `android/app/libs`.
 - Native SDK binaries and licensed `.nosmai` assets are not bundled in the
   pub.dev package.
@@ -231,3 +244,18 @@ versions and installation steps.
 This Flutter plugin and its associated native SDKs are proprietary commercial
 software. A valid agreement and license key are required. See [LICENSE](LICENSE)
 for the applicable terms.
+
+### Android preview rendering
+
+`NosmaiCameraPreview` uses Flutter's `SurfaceProducer` and `Texture` on Android.
+The existing GPU beauty/AR pipeline renders directly to the Flutter-owned
+Surface at 720 x 1280 physical pixels. A processed output frame determines
+readiness; camera input acceptance alone does not show the preview.
+
+The widget releases only its own texture, hides old frames during camera
+switch/resume, and rebinds output when Flutter recreates its Surface.
+Native recording and streaming continue through their existing SDK sinks.
+
+This beta resolves the matching Android AAR automatically from the official
+`3.0.7-beta.2` GitHub prerelease. Applications do not need to download or copy
+the AAR into `android/app/libs`.

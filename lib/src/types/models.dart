@@ -89,8 +89,10 @@ class NosmaiFilter {
   // Cloud-specific properties (optional for local filters)
   final bool isFree;
   final bool isDownloaded;
+
   /// Legacy URL/Base64 preview. Prefer NosmaiFilterPreview for managed caching.
-  @Deprecated('Use NosmaiFilterPreview(filter: filter) for caching and fallback. '
+  @Deprecated(
+      'Use NosmaiFilterPreview(filter: filter) for caching and fallback. '
       'previewUrl remains supported for existing clients.')
   final String? previewUrl;
   final String? category;

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../nosmai_effects_sdk.dart';
 import '../platform/method_channel.dart';
+import '../platform/platform_interface.dart';
 
 /// Normalized details for a tap inside [NosmaiCameraPreview].
 class NosmaiGameTapDetails {
@@ -30,8 +31,7 @@ class NosmaiGameTapDetails {
 
 /// Overrides automatic game-tap forwarding for a camera preview.
 typedef NosmaiGameTapCallback = FutureOr<void> Function(
-  NosmaiGameTapDetails tap,
-);
+    NosmaiGameTapDetails tap);
 
 class NosmaiCameraPreview extends StatefulWidget {
   const NosmaiCameraPreview({
@@ -106,9 +106,120 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
   bool _notifiedInitialized = false;
   bool _iosPreviewStartRequested = false;
   Completer<void>? _readyCompleter;
+  int? _androidTextureId;
+  int _androidCreationGeneration = 0;
+  bool _androidPreviewVisible = false;
+  bool _androidPaused = false;
+  Timer? _androidReadyTimer;
+
+  Future<void> _releaseAndroidTexture(int id) async {
+    try {
+      await NosmaiFlutterPlatform.instance.clearRenderSurface(id);
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'nosmai_effects_sdk',
+          context: ErrorDescription('while releasing a camera preview texture'),
+        ),
+      );
+    }
+  }
+
+  void _setAndroidPreviewError(String message) {
+    if (!mounted) return;
+    _androidReadyTimer?.cancel();
+    final textureId = _androidTextureId;
+    _androidTextureId = null;
+    if (textureId != null) unawaited(_releaseAndroidTexture(textureId));
+    final ready = _readyCompleter;
+    _readyCompleter = null;
+    if (ready != null && !ready.isCompleted) {
+      ready.completeError(StateError(message));
+    }
+    setState(() {
+      _androidPreviewVisible = false;
+      _isInitializing = false;
+      _isInitialized = false;
+      _initError = message;
+    });
+    widget.onError?.call(message);
+  }
+
+  void _handleNativePreviewState(int textureId, bool visible, String? error) {
+    if (!mounted || textureId != _androidTextureId) return;
+    if (error != null) {
+      _setAndroidPreviewError(error);
+      return;
+    }
+    setState(() {
+      _androidPreviewVisible = visible && !_androidPaused;
+      if (_androidPreviewVisible) {
+        _androidReadyTimer?.cancel();
+        _initError = null;
+      }
+    });
+  }
+
+  Future<void> _initializeAndroidTexture() async {
+    final generation = ++_androidCreationGeneration;
+    int? allocated;
+    try {
+      if (mounted) {
+        setState(() {
+          _isInitializing = true;
+          _isInitialized = false;
+          _androidPreviewVisible = false;
+          _initError = null;
+        });
+      }
+      final platform = NosmaiFlutterPlatform.instance;
+      allocated = await platform.createPreviewTexture(width: 720, height: 1280);
+      if (allocated == null) {
+        throw StateError('Camera texture allocation failed.');
+      }
+      if (!mounted || generation != _androidCreationGeneration) {
+        await _releaseAndroidTexture(allocated);
+        return;
+      }
+      setState(() {
+        _androidTextureId = allocated;
+      });
+      if (_androidPaused) await _nosmaiFlutter.pauseCamera();
+      final bound = await platform.setRenderSurface(
+        allocated,
+        width: 720,
+        height: 1280,
+      );
+      if (!mounted || generation != _androidCreationGeneration) return;
+      if (!bound) throw StateError('Camera output could not be attached.');
+      // Native creates the same camera/filter pipeline and defers camera opening
+      // until its GPU sink is bound. Readiness follows a successful output swap.
+      if (!_notifiedInitialized && !_androidPaused) {
+        _androidReadyTimer = Timer(const Duration(seconds: 12), () {
+          _setAndroidPreviewError('Camera preview did not become ready.');
+        });
+      }
+    } catch (error) {
+      if (allocated != null &&
+          mounted &&
+          generation == _androidCreationGeneration) {
+        await _releaseAndroidTexture(allocated);
+        _androidTextureId = null;
+      }
+      if (!mounted || generation != _androidCreationGeneration) return;
+      _setAndroidPreviewError('Failed to start camera preview: $error');
+    }
+  }
 
   void _handleNativeCameraReady() {
     if (!mounted || _notifiedInitialized) return;
+    if (defaultTargetPlatform == TargetPlatform.android &&
+        (!_androidPreviewVisible || _androidPaused)) {
+      return;
+    }
+    _androidReadyTimer?.cancel();
     _notifiedInitialized = true;
     final readyCompleter = _readyCompleter;
     _readyCompleter = null;
@@ -137,8 +248,16 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
 
     if (defaultTargetPlatform == TargetPlatform.android) {
       CameraStateNotifier.instance.addReadyCallback(_handleNativeCameraReady);
+      CameraStateNotifier.instance.addPreviewStateCallback(
+        _handleNativePreviewState,
+      );
+      _androidPaused =
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.paused;
       _isInitializing = true;
       _initError = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_initializeAndroidTexture());
+      });
     } else {
       _isInitializing = true;
       _isInitialized = false;
@@ -180,6 +299,11 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
   @override
   void dispose() {
     _iosPreviewStartRequested = false;
+    _androidCreationGeneration++;
+    _androidReadyTimer?.cancel();
+    final textureId = _androidTextureId;
+    _androidTextureId = null;
+    if (textureId != null) unawaited(_releaseAndroidTexture(textureId));
     final readyCompleter = _readyCompleter;
     _readyCompleter = null;
     if (readyCompleter != null && !readyCompleter.isCompleted) {
@@ -189,8 +313,12 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
     }
     widget.controller?._detach();
     if (defaultTargetPlatform == TargetPlatform.android) {
-      CameraStateNotifier.instance
-          .removeReadyCallback(_handleNativeCameraReady);
+      CameraStateNotifier.instance.removeReadyCallback(
+        _handleNativeCameraReady,
+      );
+      CameraStateNotifier.instance.removePreviewStateCallback(
+        _handleNativePreviewState,
+      );
     }
 
     WidgetsBinding.instance.removeObserver(this);
@@ -209,6 +337,22 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      if (state == AppLifecycleState.paused) {
+        _androidPaused = true;
+        _androidReadyTimer?.cancel();
+        if (mounted) {
+          setState(() {
+            _androidPreviewVisible = false;
+          });
+        }
+        if (_androidTextureId != null) unawaited(_pauseCamera());
+      } else if (state == AppLifecycleState.resumed) {
+        _androidPaused = false;
+        if (_androidTextureId != null) unawaited(_resumeCamera());
+      }
+      return;
+    }
     if (!_isInitialized) return;
 
     switch (state) {
@@ -221,7 +365,7 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
         _resumeCamera();
         break;
       case AppLifecycleState.detached:
-        // Native PlatformView disposal owns final camera cleanup.
+        // Native output ownership/widget disposal owns final camera cleanup.
         break;
       default:
         break;
@@ -231,11 +375,8 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
   Future<void> _pauseCamera() async {
     try {
       if (defaultTargetPlatform == TargetPlatform.android) {
-        // Keep the GL pipeline/view alive and only release camera hardware.
-        // The native PlatformView owns full cleanup when the widget is disposed.
-        if (_isInitialized) {
-          await _nosmaiFlutter.pauseCamera();
-        }
+        // Retain the graph and Flutter texture; native pauses camera/GL lifecycle.
+        await _nosmaiFlutter.pauseCamera();
       } else if (_isInitialized && _nosmaiFlutter.isProcessing) {
         await _nosmaiFlutter.stopProcessing();
       }
@@ -257,6 +398,8 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
         if (!resumed && !_nosmaiFlutter.isProcessing) {
           await _nosmaiFlutter.startProcessing();
         }
+        // The output counter/visibility event reveals the resumed frame.
+        return;
       } else {
         await _nosmaiFlutter.reinitializePreview();
 
@@ -324,16 +467,24 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
       if (_isInitializing) return;
 
       _notifiedInitialized = false;
+      _androidReadyTimer?.cancel();
       final ready = Completer<void>();
+      // Disposal can complete this before native reinitialization returns.
+      ready.future.ignore();
       _readyCompleter = ready;
       setState(() {
         _isInitialized = false;
         _isInitializing = true;
+        _androidPreviewVisible = false;
         _initError = null;
       });
 
       try {
-        await _nosmaiFlutter.reinitializePreview();
+        if (_androidTextureId == null) {
+          await _initializeAndroidTexture();
+        } else {
+          await _nosmaiFlutter.reinitializePreview();
+        }
         await ready.future.timeout(const Duration(seconds: 12));
       } catch (error) {
         if (identical(_readyCompleter, ready)) {
@@ -363,10 +514,7 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
     }
   }
 
-  Future<void> _handleGameTap(
-    TapUpDetails details,
-    Size previewSize,
-  ) async {
+  Future<void> _handleGameTap(TapUpDetails details, Size previewSize) async {
     if (!widget.enableGameTapHandling ||
         previewSize.width <= 0 ||
         previewSize.height <= 0) {
@@ -392,10 +540,7 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
       }
 
       if (await _nosmaiFlutter.isGameReady()) {
-        await _nosmaiFlutter.sendGameTap(
-          tap.normalizedX,
-          tap.normalizedY,
-        );
+        await _nosmaiFlutter.sendGameTap(tap.normalizedX, tap.normalizedY);
       }
     } catch (error, stackTrace) {
       FlutterError.reportError(
@@ -433,36 +578,6 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
 
   @override
   Widget build(BuildContext context) {
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      const aspectRatio = 9.0 / 16.0;
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          final resolvedSize =
-              _resolveAndroidPreviewSize(context, constraints, aspectRatio);
-
-          return Align(
-            alignment: Alignment.center,
-            child: SizedBox(
-              width: resolvedSize.width,
-              height: resolvedSize.height,
-              child: ClipRect(
-                child: _buildPreviewWithGameTapHandling(
-                  previewSize: resolvedSize,
-                  preview: const RepaintBoundary(
-                    child: AndroidView(
-                      viewType: 'nosmai_camera_preview',
-                      layoutDirection: TextDirection.ltr,
-                      creationParamsCodec: StandardMessageCodec(),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      );
-    }
-
     // Show error state
     if (_initError != null) {
       return Container(
@@ -473,11 +588,7 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
-                Icons.error_outline,
-                color: Colors.red,
-                size: 48,
-              ),
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
               const SizedBox(height: 16),
               Text(
                 'Camera Error',
@@ -492,10 +603,7 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
                 padding: const EdgeInsets.symmetric(horizontal: 32),
                 child: Text(
                   _initError!,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
-                  ),
+                  style: const TextStyle(color: Colors.white70, fontSize: 14),
                   textAlign: TextAlign.center,
                 ),
               ),
@@ -507,6 +615,53 @@ class _NosmaiCameraPreviewState extends State<NosmaiCameraPreview>
             ],
           ),
         ),
+      );
+    }
+
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      const aspectRatio = 9.0 / 16.0;
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final resolvedSize = _resolveAndroidPreviewSize(
+            context,
+            constraints,
+            aspectRatio,
+          );
+
+          return Align(
+            alignment: Alignment.center,
+            child: SizedBox(
+              width: resolvedSize.width,
+              height: resolvedSize.height,
+              child: ClipRect(
+                child: _buildPreviewWithGameTapHandling(
+                  previewSize: resolvedSize,
+                  preview: RepaintBoundary(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (_androidTextureId != null)
+                          // Match the Y transform formerly applied by the native
+                          // view's display quad. This affects presentation only;
+                          // camera facing, recording and game coordinates retain
+                          // their SDK contracts.
+                          Transform.flip(
+                            flipY: true,
+                            child: Texture(textureId: _androidTextureId!),
+                          ),
+                        if (!_androidPreviewVisible)
+                          const ColoredBox(
+                            key: ValueKey('nosmai-preview-cover'),
+                            color: Colors.black,
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
       );
     }
 

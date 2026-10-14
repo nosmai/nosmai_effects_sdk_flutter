@@ -25,7 +25,7 @@ apply plugin: "com.android.library"
 
 // Pinned native SDK release. Bump here (and in README "Native SDK distribution")
 // when a new Android SDK ships.
-def nosmaiSdkVersion = "3.0.6"
+def nosmaiSdkVersion = "3.0.7-beta.2"
 apply plugin: "kotlin-android"
 
 android {
@@ -63,6 +63,7 @@ android {
     }
 
     defaultConfig {
+        buildConfigField "boolean", "NOSMAI_INTERNAL_LOGS", "false"
         minSdk = 24
         consumerProguardFiles 'consumer-rules.pro'
         ndk {

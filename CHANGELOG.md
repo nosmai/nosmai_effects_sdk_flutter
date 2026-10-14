@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.2-beta.2
+
+- Added a GPU-backed Android texture preview using Flutter `SurfaceProducer`.
+- Added processed-frame readiness and safe surface recreation handling.
+- Added managed cloud-filter preview loading and bounded caching.
+- Updated Android native dependency to `3.0.7-beta.2`.
+- Improved Android preview lifecycle behavior across pause, resume, camera
+  switching, and widget disposal.
+
 ## 2.0.1
 
 - Fixed Android eye-colour controls to use the production lens pipeline.
