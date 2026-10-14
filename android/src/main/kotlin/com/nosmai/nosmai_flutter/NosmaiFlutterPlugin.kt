@@ -829,6 +829,8 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "isBeautyEffectEnabled" -> handleIsBeautyEffectEnabled(result)
             "isCloudFilterEnabled" -> handleIsCloudFilterEnabled(result)
             "getCloudFilters" -> handleGetCloudFilters(call, result)
+            "getFilterPreviewContext" -> handleFilterPreview(call, result, false)
+            "loadFilterPackagePreview" -> handleFilterPreview(call, result, true)
             "downloadCloudFilter" -> handleDownloadCloudFilter(call, result)
             "removeCloudFilter" -> handleRemoveCloudFilter(call, result)
             "getFilters" -> handleGetFilters(call, result)
@@ -3042,6 +3044,83 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
         }
     }
 
+    private fun previewPackage(call: MethodCall): File? {
+        var path = call.argument<String>("path").orEmpty()
+        val id = call.argument<String>("filterId").orEmpty()
+        if (path.isBlank() && call.argument<Boolean>("cloud") == true &&
+            id.isNotBlank() && !id.contains('/') && !id.contains('\\') && id != "." && id != "..") {
+            path = com.nosmai.effect.internal.NosmaiCloudFilter.getFilterLocalPath(id)
+        }
+        if (path.isBlank()) return null
+        val file = File(path).canonicalFile
+        val roots = listOf(context.cacheDir.canonicalPath, context.filesDir.canonicalPath)
+        if (roots.none { file.path.startsWith(it + File.separator) } ||
+            !file.name.endsWith(".nosmai", true) || !file.isFile ||
+            file.length() !in 1..(32L * 1024 * 1024)) return null
+        return file
+    }
+
+    private fun previewStamp(file: File): String =
+        "${file.canonicalPath}:${file.length()}:${file.lastModified()}"
+
+    private fun handleFilterPreview(call: MethodCall, result: Result, extract: Boolean) {
+        backgroundExecutor.execute {
+            try {
+                val key = com.nosmai.effect.internal.Nosmai.getLicenseKey().orEmpty()
+                if (key.isBlank() || (call.argument<Boolean>("cloud") == true &&
+                    !com.nosmai.effect.internal.NosmaiCloudFilter.isCloudFiltersEnabled())) {
+                    mainHandler.post { result.error("PREVIEW_UNAVAILABLE", "Preview access is unavailable", null) }
+                    return@execute
+                }
+                val scope = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(key.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                val file = previewPackage(call)
+                if (!extract) {
+                    val root = File(context.cacheDir, "NosmaiFlutterPreviews/v1/$scope")
+                    val directory = if (root.isDirectory || root.mkdirs()) root.path else null
+                    val stamp = file?.let { previewStamp(it) }
+                    mainHandler.post {
+                        if (com.nosmai.effect.internal.Nosmai.getLicenseKey() != key) {
+                            result.error("PREVIEW_UNAVAILABLE", "Preview session changed", null)
+                            return@post
+                        }
+                        result.success(mapOf(
+                        "directory" to directory,
+                        "packageStamp" to stamp
+                    )) }
+                    return@execute
+                }
+                val stamp = call.argument<String>("packageStamp")
+                if (file == null || stamp == null || stamp != previewStamp(file)) {
+                    mainHandler.post { result.success(null) }
+                    return@execute
+                }
+                val cls = Class.forName("com.nosmai.effect.internal.NosmaiFilter")
+                val bitmap = cls.getMethod("nativeExtractPreviewFromFile", String::class.java)
+                    .invoke(null, file.path) as? Bitmap
+                var bytes: ByteArray? = null
+                if (bitmap != null) {
+                    try {
+                        val scale = minOf(1.0, 512.0 / maxOf(bitmap.width, bitmap.height))
+                        val resized = if (scale < 1.0) Bitmap.createScaledBitmap(bitmap,
+                            maxOf(1, (bitmap.width * scale).toInt()),
+                            maxOf(1, (bitmap.height * scale).toInt()), true) else bitmap
+                        try {
+                            val stream = ByteArrayOutputStream()
+                            if (resized.compress(Bitmap.CompressFormat.PNG, 100, stream) &&
+                                stream.size() <= 2 * 1024 * 1024) bytes = stream.toByteArray()
+                        } finally { if (resized !== bitmap) resized.recycle() }
+                    } finally { bitmap.recycle() }
+                }
+                if (stamp != previewStamp(file) || com.nosmai.effect.internal.Nosmai.getLicenseKey() != key) bytes = null
+                val output = bytes
+                mainHandler.post { result.success(output) }
+            } catch (_: Throwable) {
+                mainHandler.post { result.success(null) }
+            }
+        }
+    }
+
     private fun handleGetCloudFilters(call: MethodCall, result: Result) {
         val filterTypeArg = call.argument<String>("filterType")
             ?.trim()
@@ -3121,13 +3200,6 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
                         if (downloaded && localPath.isNotBlank()) {
                             m["path"] = localPath
                             m["localPath"] = localPath
-                            try {
-                                val bmp = com.nosmai.effect.NosmaiFilterManager
-                                    .loadPreviewImageForFilter(localPath)
-                                if (bmp != null) {
-                                    m["previewImageBase64"] = bitmapToBase64(bmp)
-                                }
-                            } catch (_: Throwable) {}
                         }
 
                         if (it.thumbnailUrl.isNotBlank()) {

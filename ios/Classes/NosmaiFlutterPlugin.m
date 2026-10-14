@@ -5,6 +5,7 @@
 #import <SystemConfiguration/SystemConfiguration.h>
 #import <sys/socket.h>
 #import <netinet/in.h>
+#import <CommonCrypto/CommonDigest.h>
 #include <math.h>
 
 #if DEBUG
@@ -76,6 +77,8 @@
 @property(nonatomic, assign) BOOL isRecording;
 @property(nonatomic, strong) NSTimer* recordingProgressTimer;
 @property(nonatomic, strong) NSCache* filterCache;
+@property(nonatomic, copy) NSString* previewCacheScope;
+@property(nonatomic, strong) dispatch_queue_t previewQueue;
 @property(nonatomic, strong) NSArray* cachedLocalFilters;
 @property(nonatomic, strong) NSDate* lastFilterCacheTime;
 @property(nonatomic, assign) BOOL isCameraAttached;
@@ -132,6 +135,7 @@
     _cameraStateSemaphore = dispatch_semaphore_create(1);
 
     _cacheQueue = dispatch_queue_create("com.nosmai.cache", DISPATCH_QUEUE_CONCURRENT);
+    _previewQueue = dispatch_queue_create("com.nosmai.preview", DISPATCH_QUEUE_SERIAL);
 
     _filterOperationSemaphore = dispatch_semaphore_create(1);
     _beautyPreparationQueue = dispatch_queue_create("com.nosmai.flutter.beauty-preparation", DISPATCH_QUEUE_SERIAL);
@@ -386,6 +390,10 @@
   else if ([@"removeCloudFilter" isEqualToString:method]) {
     [self handleRemoveCloudFilter:call result:result];
   }
+  else if ([@"getFilterPreviewContext" isEqualToString:method] ||
+           [@"loadFilterPackagePreview" isEqualToString:method]) {
+    [self handleFilterPreview:call result:result];
+  }
   else if ([@"getCloudFilters" isEqualToString:method]) {
     [self handleGetCloudFilters:call result:result];
   }
@@ -560,6 +568,12 @@
       strongSelf.isInitialized = success;
 
       if (success) {
+        NSData *keyBytes = [licenseKey dataUsingEncoding:NSUTF8StringEncoding];
+        unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+        CC_SHA256(keyBytes.bytes, (CC_LONG)keyBytes.length, digest);
+        NSMutableString *scope = [NSMutableString string];
+        for (NSUInteger i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [scope appendFormat:@"%02x", digest[i]];
+        strongSelf.previewCacheScope = scope;
         [[NosmaiCore shared].camera setDelegate:strongSelf];
         [[NosmaiCore shared].effects setDelegate:strongSelf];
         [strongSelf updateGameEventHandler];
@@ -2916,18 +2930,85 @@
   }
 }
 
+- (NSString *)previewPackageForArguments:(NSDictionary *)arguments {
+  NSString *path = [arguments[@"path"] isKindOfClass:NSString.class] ? arguments[@"path"] : nil;
+  NSString *filterId = [arguments[@"filterId"] isKindOfClass:NSString.class] ? arguments[@"filterId"] : nil;
+  if (path.length == 0 && [arguments[@"cloud"] boolValue] && filterId.length > 0 &&
+      ![filterId containsString:@"/"] && ![filterId containsString:@"\\"] &&
+      ![filterId isEqualToString:@"."] && ![filterId isEqualToString:@".."]) {
+    NSString *cache = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
+    path = [[cache stringByAppendingPathComponent:@"NosmaiCloudFilters"]
+        stringByAppendingPathComponent:[filterId stringByAppendingString:@".nosmai"]];
+  }
+  path = path.stringByStandardizingPath.stringByResolvingSymlinksInPath;
+  NSString *home = [NSHomeDirectory().stringByResolvingSymlinksInPath stringByAppendingString:@"/"];
+  if (![path hasPrefix:home] || ![path.pathExtension.lowercaseString isEqualToString:@"nosmai"]) return nil;
+  NSDictionary *attrs = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+  unsigned long long size = [attrs[NSFileSize] unsignedLongLongValue];
+  if (![attrs[NSFileType] isEqual:NSFileTypeRegular] || size == 0 || size > 32 * 1024 * 1024) return nil;
+  return path;
+}
+
+- (NSString *)previewStampForPath:(NSString *)path {
+  NSDictionary *attrs = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+  if (!attrs) return nil;
+  return [NSString stringWithFormat:@"%@:%@:%@", path, attrs[NSFileSize],
+      @([attrs[NSFileModificationDate] timeIntervalSince1970])];
+}
+
+- (void)handleFilterPreview:(FlutterMethodCall *)call result:(FlutterResult)result {
+  if (!self.isInitialized || self.previewCacheScope.length == 0 ||
+      ([call.arguments[@"cloud"] boolValue] && ![[NosmaiSDK sharedInstance] isCloudFilterEnabled])) {
+    result([FlutterError errorWithCode:@"PREVIEW_UNAVAILABLE" message:@"Preview access is unavailable" details:nil]);
+    return;
+  }
+  NSString *scope = self.previewCacheScope;
+  dispatch_async(self.previewQueue, ^{
+    @autoreleasepool {
+      NSString *path = [self previewPackageForArguments:call.arguments];
+      NSString *stamp = path ? [self previewStampForPath:path] : nil;
+      if ([call.method isEqualToString:@"getFilterPreviewContext"]) {
+        NSString *cache = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *directory = [[cache stringByAppendingPathComponent:@"NosmaiFlutterPreviews/v1"] stringByAppendingPathComponent:scope];
+        BOOL ready = [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if (!self.isInitialized || ![scope isEqual:self.previewCacheScope]) {
+            result([FlutterError errorWithCode:@"PREVIEW_UNAVAILABLE" message:@"Preview session changed" details:nil]);
+            return;
+          }
+          result(@{@"directory": ready ? directory : NSNull.null, @"packageStamp": stamp ?: NSNull.null});
+        });
+        return;
+      }
+      NSData *data = nil;
+      if (stamp && [stamp isEqual:call.arguments[@"packageStamp"]]) {
+        UIImage *image = [[NosmaiSDK sharedInstance] loadPreviewImageForFilter:path];
+        if (image) {
+          CGFloat scale = MIN(1.0, 512.0 / MAX(image.size.width, image.size.height));
+          CGSize size = CGSizeMake(MAX(1, image.size.width * scale), MAX(1, image.size.height * scale));
+          UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
+          format.scale = 1;
+          UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size format:format];
+          UIImage *thumbnail = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+            [image drawInRect:(CGRect){CGPointZero, size}];
+          }];
+          data = UIImagePNGRepresentation(thumbnail);
+          if (data.length > 2 * 1024 * 1024 || ![stamp isEqual:[self previewStampForPath:path]]) data = nil;
+        }
+      }
+      dispatch_async(dispatch_get_main_queue(), ^{
+        result(self.isInitialized && [scope isEqual:self.previewCacheScope] && data
+            ? [FlutterStandardTypedData typedDataWithBytes:data] : nil);
+      });
+    }
+  });
+}
+
 - (void)handleGetCloudFilters:(FlutterMethodCall*)call result:(FlutterResult)result {
   if (!self.isInitialized) {
     result([FlutterError errorWithCode:@"NOT_INITIALIZED"
                                message:@"SDK must be initialized before getting cloud filters"
                                details:@"Please call initWithLicense() first"]);
-    return;
-  }
-
-  if (![self isNetworkAvailable]) {
-    result([FlutterError errorWithCode:@"NETWORK_UNAVAILABLE"
-                               message:@"No internet connection available"
-                               details:@"Cloud filters require an active internet connection. Please check your network settings and try again."]);
     return;
   }
 
@@ -3083,17 +3164,6 @@
 
         if (filterPath && [[NSFileManager defaultManager] fileExistsAtPath:filterPath]) {
           isDownloaded = YES;
-        }
-
-        if (isDownloaded && filterPath && [[NSFileManager defaultManager] fileExistsAtPath:filterPath]) {
-          UIImage *previewImage = [[NosmaiSDK sharedInstance] loadPreviewImageForFilter:filterPath];
-          if (previewImage) {
-            NSData *imageData = UIImageJPEGRepresentation(previewImage, 0.7);
-            if (imageData) {
-              NSString *base64String = [imageData base64EncodedStringWithOptions:0];
-              enhancedFilter[@"previewImageBase64"] = base64String;
-            }
-          }
         }
 
         enhancedFilter[@"isDownloaded"] = @(isDownloaded);

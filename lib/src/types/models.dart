@@ -51,6 +51,18 @@ String _normalizeFilterType(dynamic value) {
   return normalized;
 }
 
+String? _filterPreview(Map<String, dynamic> map, bool isCloud) {
+  if (isCloud) {
+    for (final key in ['previewUrl', 'thumbnailUrl']) {
+      final value = _stringOrNull(map[key]);
+      if (value != null && value.trim().isNotEmpty) return value;
+    }
+  }
+  return map['previewImageBase64']?.toString() ??
+      map['previewUrl']?.toString() ??
+      map['thumbnailUrl']?.toString();
+}
+
 /// Filter information for both local and cloud filters
 class NosmaiFilter {
   final String id;
@@ -77,6 +89,9 @@ class NosmaiFilter {
   // Cloud-specific properties (optional for local filters)
   final bool isFree;
   final bool isDownloaded;
+  /// Legacy URL/Base64 preview. Prefer NosmaiFilterPreview for managed caching.
+  @Deprecated('Use NosmaiFilterPreview(filter: filter) for caching and fallback. '
+      'previewUrl remains supported for existing clients.')
   final String? previewUrl;
   final String? category;
   final int downloadCount;
@@ -263,9 +278,7 @@ class NosmaiFilter {
       sourceType: parsedSourceType,
       isFree: map['isFree'] as bool? ?? true,
       isDownloaded: map['isDownloaded'] as bool? ?? false,
-      previewUrl: map['previewImageBase64']?.toString() ??
-          map['previewUrl']?.toString() ??
-          map['thumbnailUrl']?.toString(),
+      previewUrl: _filterPreview(map, typeString == 'cloud'),
       category: map['category']?.toString(),
       downloadCount: _parseIntSafely(map['downloadCount']) ?? 0,
       price: _parseIntSafely(map['price']) ?? 0,
@@ -292,6 +305,7 @@ class NosmaiFilter {
       'sourceType': sourceType.name,
       'isFree': isFree,
       'isDownloaded': isDownloaded,
+      // ignore: deprecated_member_use_from_same_package
       'previewUrl': previewUrl,
       'category': category,
       'downloadCount': downloadCount,

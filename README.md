@@ -6,6 +6,26 @@ Add real-time AR effects, beauty filters, digital makeup, background replacement
 interactive camera games, camera capture, and cloud filters to Flutter
 applications through one SDK for Android and iOS.
 
+## Managed cloud previews
+
+Use `NosmaiFilterPreview(filter: filter)` in filter tiles. It handles thumbnail
+memory/disk caching, network loading, downloaded-package fallback and placeholders.
+No cache toggle or extra initialization call is required. Existing `previewUrl`
+values remain supported with a deprecation notice directing clients to this widget.
+
+```dart
+NosmaiFilterPreview(
+  filter: filter,
+  fit: BoxFit.cover,
+  placeholder: (_) => const Icon(Icons.image_outlined),
+  errorBuilder: (_) => const Icon(Icons.image_not_supported_outlined),
+)
+```
+
+The preview cache allows 32 MB / 128 files on disk and 4 MB of encoded image
+data in memory, with a seven-day TTL. URL/version changes invalidate cache keys.
+The widget reads previews only; download/apply calls remain the host app's choice.
+
 ## Built for
 
 Nosmai Effects can be used in:
