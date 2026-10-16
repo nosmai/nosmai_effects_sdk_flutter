@@ -2,10 +2,10 @@ PODS:
   - Flutter (1.0.0)
   - integration_test (0.0.1):
     - Flutter
-  - nosmai_effects_sdk (2.0.1):
+  - nosmai_effects_sdk (2.0.2):
     - Flutter
-    - NosmaiCameraSDK (~> 3.0.6)
-  - NosmaiCameraSDK (3.0.6)
+    - NosmaiCameraSDK (= 3.0.7)
+  - NosmaiCameraSDK (3.0.7)
   - permission_handler_apple (9.3.0):
     - Flutter
 
@@ -13,7 +13,7 @@ DEPENDENCIES:
   - Flutter (from `Flutter`)
   - integration_test (from `.symlinks/plugins/integration_test/ios`)
   - nosmai_effects_sdk (from `.symlinks/plugins/nosmai_effects_sdk/ios`)
-  - NosmaiCameraSDK (from `https://cdn.cocoapods.org/Specs/0/a/b/NosmaiCameraSDK/3.0.6/NosmaiCameraSDK.podspec.json`)
+  - NosmaiCameraSDK (from `https://cdn.cocoapods.org/Specs/0/a/b/NosmaiCameraSDK/3.0.7/NosmaiCameraSDK.podspec.json`)
   - permission_handler_apple (from `.symlinks/plugins/permission_handler_apple/ios`)
 
 EXTERNAL SOURCES:
@@ -24,17 +24,17 @@ EXTERNAL SOURCES:
   nosmai_effects_sdk:
     :path: ".symlinks/plugins/nosmai_effects_sdk/ios"
   NosmaiCameraSDK:
-    :podspec: https://cdn.cocoapods.org/Specs/0/a/b/NosmaiCameraSDK/3.0.6/NosmaiCameraSDK.podspec.json
+    :podspec: https://cdn.cocoapods.org/Specs/0/a/b/NosmaiCameraSDK/3.0.7/NosmaiCameraSDK.podspec.json
   permission_handler_apple:
     :path: ".symlinks/plugins/permission_handler_apple/ios"
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
-  nosmai_effects_sdk: 7df9dbabc0560d3fef94790fbb838c3c7449294f
-  NosmaiCameraSDK: e12999550865089ebf5c5809c52bbc05ffa3242b
+  nosmai_effects_sdk: 46cf5b65d29a19d72b48d47a777bb52d7d8f9be8
+  NosmaiCameraSDK: b914cb19ea0f88faf537e726f0b09bfa20ba3bc7
   permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
 
-PODFILE CHECKSUM: cca745500c70d23e9044d54ab1da0f436bce4ea1
+PODFILE CHECKSUM: b722d709df608a6903c25498facf8df97a268c38
 
 COCOAPODS: 1.16.2

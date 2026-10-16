@@ -39,10 +39,16 @@ target 'Runner' do
   # holding NosmaiCameraSDK.podspec next to a nosmai.framework built from
   # source, to compile against native APIs that have not shipped yet. Leave it
   # unset for every published build.
-  if ENV['NOSMAI_SDK_LOCAL_PODSPEC_DIR']
-    pod 'NosmaiCameraSDK', :path => ENV['NOSMAI_SDK_LOCAL_PODSPEC_DIR']
-  else
-    pod 'NosmaiCameraSDK', :podspec => 'https://cdn.cocoapods.org/Specs/0/a/b/NosmaiCameraSDK/3.0.6/NosmaiCameraSDK.podspec.json'
+  # The plugin podspec directly vendors ios/Framework/nosmai.framework when
+  # that ignored local artifact is present. Do not also install the
+  # production pod in that case, because both contain nosmai.framework.
+  local_plugin_framework = File.expand_path('../../ios/Framework/nosmai.framework', __dir__)
+  unless File.exist?(local_plugin_framework)
+    if ENV['NOSMAI_SDK_LOCAL_PODSPEC_DIR']
+      pod 'NosmaiCameraSDK', :path => ENV['NOSMAI_SDK_LOCAL_PODSPEC_DIR']
+    else
+      pod 'NosmaiCameraSDK', :podspec => 'https://cdn.cocoapods.org/Specs/0/a/b/NosmaiCameraSDK/3.0.7/NosmaiCameraSDK.podspec.json'
+    end
   end
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))

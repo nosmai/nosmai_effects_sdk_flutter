@@ -11,4 +11,4 @@ export 'src/types/errors.dart';
 export 'src/components/camera_preview.dart';
 export 'src/components/filter_preview.dart';
 export 'src/components/camera_lifecycle_mixin.dart';
-export 'src/core/nosmai_api.dart';
+export 'src/core/nosmai_api.dart' show NosmaiFlutter;

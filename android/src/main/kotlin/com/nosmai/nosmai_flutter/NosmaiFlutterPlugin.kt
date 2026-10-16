@@ -724,7 +724,9 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
     }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
-        if (call.method in VISUAL_TARGET_METHODS && !hasReadyVisualTarget()) {
+        val needsVisualTarget = call.method in VISUAL_TARGET_METHODS ||
+            (call.method == "setGrayscaleEnabled" && call.argument<Any>("enabled") == true)
+        if (needsVisualTarget && !hasReadyVisualTarget()) {
             result.error(
                 "PREVIEW_NOT_READY",
                 "The current camera preview is not ready for visual effects.",
@@ -800,6 +802,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "applyRGBFilter" -> handleApplyRGBFilter(call, result)
             "applySharpening" -> handleApplySharpening(call, result)
             "applyTeethWhitening" -> handleApplyTeethWhitening(call, result)
+            "setGrayscaleEnabled" -> handleSetGrayscaleEnabled(call, result)
             "applyGrayscaleFilter" -> handleApplyGrayscaleFilter(result)
             "applyLipstick" -> handleApplyLipstick(call, result)
             "setLipstickIntensity" -> handleSetMakeupIntensity(NosmaiBeauty.MAKEUP_LIPSTICK, call, result)
@@ -2547,6 +2550,18 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
         val intensity = normalizedUnit(call.argument<Number>("intensity"), 0.0)
         executeBeautyFilter("TeethWhitening", {
             NosmaiBeauty.applyTeethWhitening(intensity)
+        }, result)
+    }
+
+    private fun handleSetGrayscaleEnabled(call: MethodCall, result: Result) {
+        if (!requireSdkReady(result)) return
+        val enabled = call.argument<Any>("enabled") as? Boolean
+        if (enabled == null) {
+            result.error("INVALID_ARGUMENTS", "enabled must be a boolean", null)
+            return
+        }
+        executeBeautyFilter("Grayscale", {
+            NosmaiBeauty.setGrayscaleEnabled(enabled)
         }, result)
     }
 

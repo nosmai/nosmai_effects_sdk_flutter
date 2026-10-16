@@ -200,6 +200,9 @@
   else if ([@"applyTeethWhitening" isEqualToString:method]) {
     [self handleApplyTeethWhitening:call result:result];
   }
+  else if ([@"setGrayscaleEnabled" isEqualToString:method]) {
+    [self handleSetGrayscaleEnabled:call result:result];
+  }
   else if ([@"applyGrayscaleFilter" isEqualToString:method]) {
     [self handleApplyGrayscaleFilter:call result:result];
   }
@@ -1007,6 +1010,37 @@
 
   @try {
     [[NosmaiCore shared].effects applyTeethWhitening:intensity.floatValue];
+    result(nil);
+  } @catch (NSException *exception) {
+    result([FlutterError errorWithCode:@"FILTER_ERROR"
+                               message:exception.reason
+                               details:exception.userInfo]);
+  }
+}
+
+- (void)handleSetGrayscaleEnabled:(FlutterMethodCall*)call result:(FlutterResult)result {
+  if (!self.isInitialized) {
+    result([FlutterError errorWithCode:@"NOT_INITIALIZED"
+                               message:@"SDK must be initialized before changing grayscale"
+                               details:nil]);
+    return;
+  }
+
+  id enabled = call.arguments[@"enabled"];
+  if (![enabled isKindOfClass:[NSNumber class]]) {
+    result([FlutterError errorWithCode:@"INVALID_ARGUMENTS"
+                               message:@"enabled must be a boolean"
+                               details:nil]);
+    return;
+  }
+
+  @try {
+    if ([enabled boolValue]) {
+      [[NosmaiCore shared].effects applyGrayscaleFilter];
+    } else {
+      // Remove only the named grayscale node, preserving other beauty settings.
+      [[NosmaiCore shared].effects removeBuiltInFilterByName:@"GrayscaleFilter"];
+    }
     result(nil);
   } @catch (NSException *exception) {
     result([FlutterError errorWithCode:@"FILTER_ERROR"
@@ -2250,17 +2284,17 @@
   }
 }
 
-- (void)handleClearFilterCache:(FlutterMethodCall*)call result:(FlutterResult)result {
-  [self clearFilterCache];
-  result(nil);
-}
-
 - (void)clearFilterCache {
   [self.filterCache removeAllObjects];
   dispatch_barrier_async(self.cacheQueue, ^{
     self.cachedLocalFilters = nil;
     self.lastFilterCacheTime = nil;
   });
+}
+
+- (void)handleClearFilterCache:(FlutterMethodCall*)call result:(FlutterResult)result {
+  [self clearFilterCache];
+  result(nil);
 }
 
 #pragma mark - Thread-Safe Cache Methods
@@ -2301,7 +2335,6 @@
   self.filterCache.totalCostLimit = 50 * 1024 * 1024;
 }
 
-/// Handle clearLocalFiltersCache method from Flutter
 - (void)handleClearLocalFiltersCache:(FlutterMethodCall*)call result:(FlutterResult)result {
   @try {
     [self clearLocalFiltersCacheInternal];

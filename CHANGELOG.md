@@ -1,13 +1,20 @@
 # Changelog
 
-## 2.0.2-beta.2
+## 2.0.2
 
 - Added a GPU-backed Android texture preview using Flutter `SurfaceProducer`.
 - Added processed-frame readiness and safe surface recreation handling.
 - Added managed cloud-filter preview loading and bounded caching.
-- Updated Android native dependency to `3.0.7-beta.2`.
+- Updated Android and iOS native dependencies to Nosmai Effects SDK `3.0.7`.
 - Improved Android preview lifecycle behavior across pause, resume, camera
   switching, and widget disposal.
+- Added `setGrayscaleEnabled(bool enabled)` for Android and iOS; disabling it
+  removes only grayscale.
+- Deprecated cache-clearing APIs in favor of force-refresh catalog calls while
+  retaining backward compatibility.
+- Deprecated `removeBuiltInFilterByName()` in favor of grayscale toggling and
+  dedicated effect removal methods; existing calls remain supported.
+- Improved native event delivery encapsulation and runtime reliability.
 
 ## 2.0.1
 

@@ -4,6 +4,7 @@
 library;
 
 import 'dart:async';
+import 'package:flutter/foundation.dart' show internal;
 import 'package:flutter/services.dart';
 
 import '../types/enums.dart';
@@ -114,59 +115,6 @@ class NosmaiFlutter {
       },
     );
     return _gameEventController!.stream;
-  }
-
-  // Internal dispatchers for native callbacks
-  static void dispatchNativeError(NosmaiError error) {
-    final inst = NosmaiFlutter.instance;
-    if (inst._isDisposed) return;
-    inst._errorController ??= StreamController<NosmaiError>.broadcast();
-    inst._errorController!.add(error);
-  }
-
-  static void dispatchNativeDownloadProgress(NosmaiDownloadProgress progress) {
-    final inst = NosmaiFlutter.instance;
-    if (inst._isDisposed) return;
-    inst._downloadProgressController ??=
-        StreamController<NosmaiDownloadProgress>.broadcast();
-    inst._downloadProgressController!.add(progress);
-  }
-
-  static void dispatchNativeRecordingProgress(double durationSeconds) {
-    final inst = NosmaiFlutter.instance;
-    if (inst._isDisposed) return;
-    inst._recordingProgressController ??= StreamController<double>.broadcast();
-    inst._recordingProgressController!.add(durationSeconds);
-  }
-
-  static void dispatchNativeLicenseStatus(NosmaiLicenseStatus status) {
-    final inst = NosmaiFlutter.instance;
-    if (inst._isDisposed) return;
-    inst._licenseStatusController ??=
-        StreamController<NosmaiLicenseStatus>.broadcast();
-    inst._licenseStatusController!.add(status);
-  }
-
-  static void dispatchNativeActiveEffects(NosmaiActiveEffects state) {
-    final inst = NosmaiFlutter.instance;
-    if (inst._isDisposed) return;
-    inst._activeEffectsController ??=
-        StreamController<NosmaiActiveEffects>.broadcast();
-    inst._activeEffectsController!.add(state);
-  }
-
-  static void dispatchNativeGameEvent(NosmaiGameEvent event) {
-    final inst = NosmaiFlutter.instance;
-    if (inst._isDisposed || event.event.isEmpty) return;
-    inst._gameEventController?.add(event);
-  }
-
-  /// Keep Dart lifecycle state aligned when the native preview owns teardown.
-  static void dispatchNativeProcessingStopped() {
-    final inst = NosmaiFlutter.instance;
-    if (inst._isDisposed) return;
-    inst._isProcessing = false;
-    inst._isRecording = false;
   }
 
   /// Whether the SDK is initialized
@@ -335,6 +283,7 @@ class NosmaiFlutter {
   /// [filterPath] - Path to the .nosmai filter file
   ///
   /// Returns true if successful, false otherwise.
+  @Deprecated('Use applyEffect() instead.')
   Future<bool> applyFilter(String filterPath) async {
     _checkInitialized();
     return await NosmaiFlutterPlatform.instance.applyFilter(filterPath);
@@ -755,17 +704,30 @@ class NosmaiFlutter {
     }
   }
 
-  /// Clear the local filters cache
+  /// Clear the cached local-filter catalog.
   ///
-  /// Call this method to force reload filters on the next [getLocalFilters] call.
-  /// Useful during development or when filter assets have been updated.
+  /// Deprecated: request a refreshed catalog with
+  /// `getLocalFilters(forceRefresh: true)` or
+  /// `getAllLocalFilters(forceRefresh: true)` instead.
+  @Deprecated(
+    'Use getLocalFilters(forceRefresh: true) or '
+    'getAllLocalFilters(forceRefresh: true).',
+  )
   Future<bool> clearLocalFiltersCache() async {
     _checkInitialized();
-    try {
-      return await NosmaiFlutterPlatform.instance.clearLocalFiltersCache();
-    } catch (_) {
-      rethrow;
-    }
+    return NosmaiFlutterPlatform.instance.clearLocalFiltersCache();
+  }
+
+  /// Clear the native filter cache.
+  ///
+  /// Retained for source compatibility. Prefer force-refresh catalog calls.
+  @Deprecated(
+    'Use getLocalFilters(forceRefresh: true) or '
+    'getAllLocalFilters(forceRefresh: true).',
+  )
+  Future<void> clearCache() async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance.clearFilterCache();
   }
 
   /// Validate local filters and return detailed error/warning information
@@ -802,15 +764,6 @@ class NosmaiFlutter {
         message: e.message ?? 'Failed to validate local filters',
         details: e.details?.toString(),
       );
-    }
-  }
-
-  /// Clear filter cache (both Flutter memory and native cache)
-  Future<void> clearCache() async {
-    try {
-      await NosmaiFlutterPlatform.instance.clearFilterCache();
-    } catch (_) {
-      rethrow;
     }
   }
 
@@ -1280,7 +1233,13 @@ class NosmaiFlutter {
         .applyTeethWhitening(intensity.clamp(0.0, 1.0).toDouble());
   }
 
-  /// Apply grayscale filter
+  /// Enable or disable grayscale. Disabling removes only grayscale.
+  Future<void> setGrayscaleEnabled(bool enabled) async {
+    _checkInitialized();
+    await NosmaiFlutterPlatform.instance.setGrayscaleEnabled(enabled);
+  }
+
+  /// Apply grayscale filter. Use [setGrayscaleEnabled] for on/off control.
   Future<void> applyGrayscaleFilter() async {
     _checkInitialized();
     await NosmaiFlutterPlatform.instance.applyGrayscaleFilter();
@@ -1316,9 +1275,14 @@ class NosmaiFlutter {
     await NosmaiFlutterPlatform.instance.removeBuiltInFilters();
   }
 
-  /// Remove one named built-in filter without disturbing the other beauty
-  /// controls. This is primarily useful for toggle-style controls such as
-  /// grayscale.
+  /// Legacy name-based removal retained for compatibility.
+  ///
+  /// Prefer [setGrayscaleEnabled] for grayscale and the dedicated removal
+  /// methods for makeup. Native filter names and fallback behavior differ
+  /// between platforms.
+  @Deprecated(
+    'Use setGrayscaleEnabled(false) or the dedicated effect removal methods.',
+  )
   Future<void> removeBuiltInFilterByName(String filterName) async {
     _checkInitialized();
     await NosmaiFlutterPlatform.instance.removeBuiltInFilterByName(filterName);
@@ -2824,5 +2788,64 @@ class NosmaiFlutter {
       default:
         return NosmaiErrorType.unknown;
     }
+  }
+}
+
+/// Internal native-event delivery; not exported by nosmai_effects_sdk.dart.
+///
+/// Shares this Dart library with NosmaiFlutter to access its private state
+/// without exposing event injection methods on the public singleton.
+@internal
+abstract final class NosmaiNativeEvents {
+  static void error(NosmaiError error) {
+    final inst = NosmaiFlutter.instance;
+    if (inst._isDisposed) return;
+    inst._errorController ??= StreamController<NosmaiError>.broadcast();
+    inst._errorController!.add(error);
+  }
+
+  static void downloadProgress(NosmaiDownloadProgress progress) {
+    final inst = NosmaiFlutter.instance;
+    if (inst._isDisposed) return;
+    inst._downloadProgressController ??=
+        StreamController<NosmaiDownloadProgress>.broadcast();
+    inst._downloadProgressController!.add(progress);
+  }
+
+  static void recordingProgress(double durationSeconds) {
+    final inst = NosmaiFlutter.instance;
+    if (inst._isDisposed) return;
+    inst._recordingProgressController ??= StreamController<double>.broadcast();
+    inst._recordingProgressController!.add(durationSeconds);
+  }
+
+  static void licenseStatus(NosmaiLicenseStatus status) {
+    final inst = NosmaiFlutter.instance;
+    if (inst._isDisposed) return;
+    inst._licenseStatusController ??=
+        StreamController<NosmaiLicenseStatus>.broadcast();
+    inst._licenseStatusController!.add(status);
+  }
+
+  static void activeEffects(NosmaiActiveEffects state) {
+    final inst = NosmaiFlutter.instance;
+    if (inst._isDisposed) return;
+    inst._activeEffectsController ??=
+        StreamController<NosmaiActiveEffects>.broadcast();
+    inst._activeEffectsController!.add(state);
+  }
+
+  static void gameEvent(NosmaiGameEvent event) {
+    final inst = NosmaiFlutter.instance;
+    if (inst._isDisposed || event.event.isEmpty) return;
+    inst._gameEventController?.add(event);
+  }
+
+  /// Keep Dart lifecycle state aligned when the native preview owns teardown.
+  static void processingStopped() {
+    final inst = NosmaiFlutter.instance;
+    if (inst._isDisposed) return;
+    inst._isProcessing = false;
+    inst._isRecording = false;
   }
 }

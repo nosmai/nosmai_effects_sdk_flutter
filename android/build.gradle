@@ -25,7 +25,7 @@ apply plugin: "com.android.library"
 
 // Pinned native SDK release. Bump here (and in README "Native SDK distribution")
 // when a new Android SDK ships.
-def nosmaiSdkVersion = "3.0.7-beta.2"
+def nosmaiSdkVersion = "3.0.7"
 apply plugin: "kotlin-android"
 
 android {
@@ -105,7 +105,14 @@ android {
 // repository, so the pinned coordinate resolves to the local build without
 // changing the dependency (a direct local .aar file dependency is not allowed
 // in a library module). Never set in a published build.
-def nosmaiLocalRepo = project.findProperty("nosmaiSdkLocalRepo") ?: System.getenv("NOSMAI_SDK_LOCAL_REPO")
+// For local validation, an ignored android/libs/nosmai-sdk-<version>.aar is
+// automatically preferred when present. Published packages do not contain
+// this file, so consumers continue to resolve the official GitHub release.
+def bundledNosmaiRepo = file("libs")
+def bundledNosmaiAar = new File(bundledNosmaiRepo, "nosmai-sdk-${nosmaiSdkVersion}.aar")
+def nosmaiLocalRepo = project.findProperty("nosmaiSdkLocalRepo") ?:
+        System.getenv("NOSMAI_SDK_LOCAL_REPO") ?:
+        (bundledNosmaiAar.exists() ? bundledNosmaiRepo.absolutePath : null)
 rootProject.allprojects {
     repositories {
         if (nosmaiLocalRepo) {

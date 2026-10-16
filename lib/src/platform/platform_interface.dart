@@ -228,10 +228,16 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('getLocalGames() has not been implemented.');
   }
 
-  /// Clear the local filters cache
+  /// Clear the cached local-filter catalog.
   Future<bool> clearLocalFiltersCache() {
     throw UnimplementedError(
-        'clearLocalFiltersCache() has not been implemented.');
+      'clearLocalFiltersCache() has not been implemented.',
+    );
+  }
+
+  /// Clear native filter caches.
+  Future<void> clearFilterCache() {
+    throw UnimplementedError('clearFilterCache() has not been implemented.');
   }
 
   /// Validate local filters and return detailed error/warning information
@@ -273,11 +279,6 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
   Future<Map<String, dynamic>> saveVideoToGallery(String videoPath,
       {String? name}) {
     throw UnimplementedError('saveVideoToGallery() has not been implemented.');
-  }
-
-  /// Clear native filter cache
-  Future<void> clearFilterCache() {
-    throw UnimplementedError('clearFilterCache() has not been implemented.');
   }
 
   /// Detach camera from current view (for navigation cleanup)
@@ -381,6 +382,10 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
 
   Future<void> applyTeethWhitening(double intensity) {
     throw UnimplementedError('applyTeethWhitening() has not been implemented.');
+  }
+
+  Future<void> setGrayscaleEnabled(bool enabled) {
+    throw UnimplementedError('setGrayscaleEnabled() has not been implemented.');
   }
 
   Future<void> applyGrayscaleFilter() {

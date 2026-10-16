@@ -4,7 +4,7 @@ import '../types/enums.dart';
 import '../types/models.dart';
 import '../types/errors.dart';
 import 'platform_interface.dart';
-import '../core/nosmai_api.dart';
+import '../core/nosmai_api.dart' show NosmaiNativeEvents;
 
 /// Internal camera state notifier for communication between platform and widgets
 class CameraStateNotifierImpl {
@@ -156,13 +156,13 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
         final Map<String, dynamic> args =
             Map<String, dynamic>.from(call.arguments);
         final err = NosmaiError.fromMap(args);
-        NosmaiFlutter.dispatchNativeError(err);
+        NosmaiNativeEvents.error(err);
         break;
       case 'onDownloadProgress':
         final Map<String, dynamic> args =
             Map<String, dynamic>.from(call.arguments);
         final progress = NosmaiDownloadProgress.fromMap(args);
-        NosmaiFlutter.dispatchNativeDownloadProgress(progress);
+        NosmaiNativeEvents.downloadProgress(progress);
         break;
       case 'onRecordingProgress':
         try {
@@ -170,7 +170,7 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
               Map<String, dynamic>.from(call.arguments);
           final duration = (args['duration'] as num?)?.toDouble();
           if (duration != null) {
-            NosmaiFlutter.dispatchNativeRecordingProgress(duration);
+            NosmaiNativeEvents.recordingProgress(duration);
           }
         } catch (_) {
           // ignore malformed callback
@@ -205,7 +205,7 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
         break;
       case 'onCameraProcessingStopped':
         // Camera processing stopped
-        NosmaiFlutter.dispatchNativeProcessingStopped();
+        NosmaiNativeEvents.processingStopped();
         CameraStateNotifierImpl.instance.notifyCameraProcessingStopped();
         break;
       case 'onLicenseStatusChanged':
@@ -228,7 +228,7 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
               default:
                 return;
             }
-            NosmaiFlutter.dispatchNativeLicenseStatus(status);
+            NosmaiNativeEvents.licenseStatus(status);
           }
         } catch (_) {}
         break;
@@ -237,7 +237,7 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
         try {
           final Map<String, dynamic> args =
               Map<String, dynamic>.from(call.arguments);
-          NosmaiFlutter.dispatchNativeActiveEffects(
+          NosmaiNativeEvents.activeEffects(
             NosmaiActiveEffects.fromMap(args),
           );
         } catch (_) {
@@ -248,7 +248,7 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
         try {
           final Map<String, dynamic> args =
               Map<String, dynamic>.from(call.arguments);
-          NosmaiFlutter.dispatchNativeGameEvent(
+          NosmaiNativeEvents.gameEvent(
             NosmaiGameEvent.fromMap(args),
           );
         } catch (_) {
@@ -678,13 +678,14 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
 
   @override
   Future<bool> clearLocalFiltersCache() async {
-    try {
-      final result =
-          await methodChannel.invokeMethod<bool>('clearLocalFiltersCache');
-      return result ?? false;
-    } catch (_) {
-      rethrow;
-    }
+    final result =
+        await methodChannel.invokeMethod<bool>('clearLocalFiltersCache');
+    return result ?? false;
+  }
+
+  @override
+  Future<void> clearFilterCache() async {
+    await methodChannel.invokeMethod<void>('clearFilterCache');
   }
 
   @override
@@ -781,15 +782,6 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
       });
       return Map<String, dynamic>.from(result ?? {});
     } catch (_) {
-      rethrow;
-    }
-  }
-
-  @override
-  Future<void> clearFilterCache() async {
-    try {
-      await methodChannel.invokeMethod('clearFilterCache');
-    } catch (e) {
       rethrow;
     }
   }
@@ -970,6 +962,13 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
     } catch (e) {
       rethrow;
     }
+  }
+
+  @override
+  Future<void> setGrayscaleEnabled(bool enabled) async {
+    await methodChannel.invokeMethod<void>('setGrayscaleEnabled', {
+      'enabled': enabled,
+    });
   }
 
   @override
