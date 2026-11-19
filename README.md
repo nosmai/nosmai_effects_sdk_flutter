@@ -20,7 +20,14 @@ dependencies:
 
 Run `flutter pub get`. If your app already uses this Git ref, run
 `flutter pub upgrade nosmai_effects_sdk` to fetch the latest commit on the branch.
-Check the native SDK availability below before building.
+
+For local plugin development, point the dependency at your checkout.
+
+```yaml
+dependencies:
+  nosmai_effects_sdk:
+    path: ../nosmai_effects_sdk_flutter
+```
 
 ## Managed cloud previews
 
@@ -244,10 +251,10 @@ could otherwise stop a newly-created preview.
 - Flutter beta `2.0.3-beta.1` uses native SDK `3.0.8-beta.1` on Android and iOS.
 - iOS resolves `NosmaiCameraSDK 3.0.8-beta.1` through CocoaPods. If your app's
   `Podfile.lock` pins an older version, run `pod update NosmaiCameraSDK` in `ios/`.
-- Android builds require `nosmai-sdk-3.0.8-beta.1.aar`. Gradle can download it
-  once the [GitHub prerelease](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.8-beta.1)
-  is public. If you already have the AAR, set `NOSMAI_SDK_LOCAL_REPO` to the
-  directory containing it.
+- Android resolves `nosmai-sdk-3.0.8-beta.1.aar` automatically from the
+  [GitHub prerelease](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.8-beta.1).
+  To test with a local copy, set `NOSMAI_SDK_LOCAL_REPO` to the directory containing
+  the AAR.
 
 See the Flutter integration guide for the current compatible native SDK
 versions and installation steps.
