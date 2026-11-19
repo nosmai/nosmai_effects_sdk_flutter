@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/nosmai_api.dart' show filterPreviewSession;
 import '../preview/filter_preview_loader.dart';
 import '../types/models.dart';
 
@@ -94,7 +95,23 @@ class _NosmaiFilterPreviewState extends State<NosmaiFilterPreview> {
   @override
   void initState() {
     super.initState();
-    unawaited(_load());
+    filterPreviewSession.addListener(_sessionChanged);
+    _loading = filterPreviewSession.value != null;
+    if (_loading) unawaited(_load());
+  }
+
+  void _sessionChanged() {
+    final generation = ++_generation;
+    // Lifecycle calls can originate during a parent widget's build or disposal.
+    scheduleMicrotask(() {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _image?.dispose();
+        _image = null;
+        _loading = filterPreviewSession.value != null;
+      });
+      if (_loading) unawaited(_load());
+    });
   }
 
   @override
@@ -106,12 +123,15 @@ class _NosmaiFilterPreviewState extends State<NosmaiFilterPreview> {
         oldWidget.decodeSize != widget.decodeSize) {
       _image?.dispose();
       _image = null;
-      _loading = true;
-      unawaited(_load());
+      _generation++;
+      _loading = filterPreviewSession.value != null;
+      if (_loading) unawaited(_load());
     }
   }
 
   Future<void> _load() async {
+    final session = filterPreviewSession.value;
+    if (session == null) return;
     final generation = ++_generation;
     final filter = widget.filter;
     final size = widget.decodeSize.clamp(64, 512);
@@ -133,17 +153,22 @@ class _NosmaiFilterPreviewState extends State<NosmaiFilterPreview> {
       }
       if (!mounted || generation != _generation) return;
       final bytes = await _loader.load(
+        session: session,
         identity: _identity(filter),
         preview: filter.toMap()['previewUrl'] as String?,
         directory: context?['directory'] as String?,
         packageStamp: context?['packageStamp'] as String?,
-        packagePreview: () => _channel.invokeMethod<Uint8List>(
-            'loadFilterPackagePreview',
-            {...arguments, 'packageStamp': context?['packageStamp']}),
+        packagePreview: () async {
+          if (!mounted || generation != _generation) return null;
+          return _channel.invokeMethod<Uint8List>('loadFilterPackagePreview', {
+            ...arguments,
+            'packageStamp': context?['packageStamp'],
+          });
+        },
       );
       if (bytes != null) image = await _decode(bytes, size);
     } catch (_) {
-      // The host application controls the final placeholder, not error plumbing.
+      // Leave the image empty so the widget can display its error fallback.
     }
     if (!mounted || generation != _generation) {
       image?.dispose();
@@ -158,6 +183,7 @@ class _NosmaiFilterPreviewState extends State<NosmaiFilterPreview> {
 
   @override
   void dispose() {
+    filterPreviewSession.removeListener(_sessionChanged);
     _generation++;
     _image?.dispose();
     super.dispose();

@@ -272,7 +272,7 @@ public class Camera2Helper {
                             mPreviewSize.getWidth(), mPreviewSize.getHeight());
                 }
             } else {
-                // PERFORMANCE FIX: Increase buffers for smoother pipeline
+                // Leave room for acquireLatestImage() to discard older frames.
                 mImageReader = ImageReader.newInstance(
                         mPreviewSize.getWidth(), mPreviewSize.getHeight(), ImageFormat.YUV_420_888, 3);
                 mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mBackgroundHandler);
@@ -563,12 +563,10 @@ public class Camera2Helper {
                             }
 
                             try {
-                                // Select the best supported FPS range.
                                 Range<Integer> fpsRange = getBestFpsRange();
-                                NosmaiLog.i(TAG, "Using FPS range: " + fpsRange);
-                                requestBuilder.set(
-                                        CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                                        fpsRange);
+                                if (fpsRange != null) {
+                                    requestBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange);
+                                }
 
                                 // Set auto-exposure and auto-focus for stability
                                 requestBuilder.set(
@@ -1094,69 +1092,40 @@ public class Camera2Helper {
     }
 
     /**
-     * Switch camera (basic implementation - requires restart)
-     * Note: This is a simple implementation that just changes the static CAMERA_FACING
+     * Logs a switch request. The plugin switches cameras by reopening the camera.
      */
     public void switchCamera() {
-        // For a full implementation, we would need to restructure the class
-        // For now, we'll just log that camera switching was requested
         NosmaiLog.w(TAG, "Camera switching requested but requires app restart for full implementation");
     }
 
-    /**
-     * Select the best FPS range supported by the device.
-     * Priority: 30 FPS > 25 FPS > highest available
-     */
+    // Allow longer exposures in dim light. Only submit a range the camera advertises.
     private Range<Integer> getBestFpsRange() {
-        if (mCameraCharacteristics == null) {
-            NosmaiLog.w(TAG, "Camera characteristics not available, using default 15-30 FPS");
-            return new Range<>(15, 30);
+        if (mCameraCharacteristics == null) return null;
+        return selectPreviewFpsRange(mCameraCharacteristics.get(
+                CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES));
+    }
+
+    static Range<Integer> selectPreviewFpsRange(Range<Integer>[] ranges) {
+        Range<Integer> best = null;
+        if (ranges != null) {
+            for (Range<Integer> range : ranges) {
+                if (best == null || compareFpsRanges(range.getLower(), range.getUpper(),
+                        best.getLower(), best.getUpper()) < 0) best = range;
+            }
         }
+        return best;
+    }
 
-        try {
-            // Get all supported FPS ranges
-            Range<Integer>[] fpsRanges = mCameraCharacteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
-            if (fpsRanges == null || fpsRanges.length == 0) {
-                NosmaiLog.w(TAG, "No FPS ranges available, using default");
-                return new Range<>(15, 30);
-            }
+    static int compareFpsRanges(int low, int high, int otherLow, int otherHigh) {
+        int priority = Integer.compare(fpsPriority(low, high), fpsPriority(otherLow, otherHigh));
+        if (priority != 0) return priority;
+        int distance = Integer.compare(Math.abs(high - 30), Math.abs(otherHigh - 30));
+        return distance != 0 ? distance : Integer.compare(low, otherLow);
+    }
 
-            // Log all available FPS ranges for debugging
-            NosmaiLog.i(TAG, "Available FPS ranges:");
-            for (Range<Integer> range : fpsRanges) {
-                NosmaiLog.i(TAG, "   - " + range.getLower() + " to " + range.getUpper() + " FPS");
-            }
-
-            // Priority 1: Try to find 30 FPS fixed
-            for (Range<Integer> range : fpsRanges) {
-                if (range.getLower() >= 30 && range.getUpper() >= 30) {
-                    NosmaiLog.i(TAG, "Selected: 30 FPS fixed range");
-                    return new Range<>(30, 30);
-                }
-            }
-
-            // Priority 2: Try to find range that includes 30 FPS
-            for (Range<Integer> range : fpsRanges) {
-                if (range.getLower() <= 30 && range.getUpper() >= 30) {
-                    NosmaiLog.i(TAG, "Selected: Variable range with 30 FPS max");
-                    return range;
-                }
-            }
-
-            // Priority 3: Find highest available FPS
-            Range<Integer> bestRange = fpsRanges[0];
-            for (Range<Integer> range : fpsRanges) {
-                if (range.getUpper() > bestRange.getUpper()) {
-                    bestRange = range;
-                }
-            }
-
-            NosmaiLog.i(TAG, "Selected: Best available range " + bestRange);
-            return bestRange;
-
-        } catch (Exception e) {
-            NosmaiLog.e(TAG, "Error getting FPS ranges: " + e.getMessage());
-            return new Range<>(15, 30);
-        }
+    private static int fpsPriority(int low, int high) {
+        if (low < 30 && high >= 30) return 0;
+        if (low == 30) return 1;
+        return high < 30 ? 2 : 3;
     }
 }

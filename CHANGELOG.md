@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.3-beta.1
+
+- Pin the Android and iOS native SDKs to `3.0.8-beta.1` for integration testing.
+
 ## 2.0.2
 
 - Added a GPU-backed Android texture preview using Flutter `SurfaceProducer`.
@@ -126,7 +130,7 @@
   - Optimized filter loading and application mechanism
   - Better error handling and recovery across all SDK operations
   - Updated `getLocalFilters()` to use new structure on iOS and Android
-  - Enhanced README and documentation with comprehensive filter guides
+  - Expanded the filter guides.
 
 ### 2.0.1+8
 - Fixed camera aspect ratio issue on Android (improves reliability across devices).
@@ -150,7 +154,7 @@
 - improve app structure.
 
 ### 2.0.1+1
-- update README.md.
+- Updated the package documentation.
 
 ### 2.0.1
 - Fixed back camera mirror issue on Android.

@@ -1,4 +1,3 @@
-# Uncomment this line to define a global platform for your project
 platform :ios, '15.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
@@ -32,22 +31,20 @@ target 'Runner' do
   use_frameworks! :linkage => :static
   use_modular_headers!
 
-  # Resolve the current production SDK directly from the public CocoaPods CDN.
+  # Resolve the pinned iOS SDK directly from the public CocoaPods CDN.
   # This remains remote and avoids any local framework override.
   #
   # Local SDK development only: NOSMAI_SDK_LOCAL_PODSPEC_DIR points at a folder
   # holding NosmaiCameraSDK.podspec next to a nosmai.framework built from
   # source, to compile against native APIs that have not shipped yet. Leave it
   # unset for every published build.
-  # The plugin podspec directly vendors ios/Framework/nosmai.framework when
-  # that ignored local artifact is present. Do not also install the
-  # production pod in that case, because both contain nosmai.framework.
-  local_plugin_framework = File.expand_path('../../ios/Framework/nosmai.framework', __dir__)
-  unless File.exist?(local_plugin_framework)
+  # Share the plugin's version check so only one native framework is installed.
+  plugin_spec = Pod::Specification.from_file(File.expand_path('../../ios/nosmai_effects_sdk.podspec', __dir__))
+  unless plugin_spec.attributes_hash['vendored_frameworks']
     if ENV['NOSMAI_SDK_LOCAL_PODSPEC_DIR']
       pod 'NosmaiCameraSDK', :path => ENV['NOSMAI_SDK_LOCAL_PODSPEC_DIR']
     else
-      pod 'NosmaiCameraSDK', :podspec => 'https://cdn.cocoapods.org/Specs/0/a/b/NosmaiCameraSDK/3.0.7/NosmaiCameraSDK.podspec.json'
+      pod 'NosmaiCameraSDK', :podspec => 'https://cdn.cocoapods.org/Specs/0/a/b/NosmaiCameraSDK/3.0.8-beta.1/NosmaiCameraSDK.podspec.json'
     end
   end
 

@@ -78,6 +78,9 @@
 @property(nonatomic, strong) NSTimer* recordingProgressTimer;
 @property(nonatomic, strong) NSCache* filterCache;
 @property(nonatomic, copy) NSString* previewCacheScope;
+@property(nonatomic, copy) FlutterResult pendingInitialization;
+@property(nonatomic, assign) BOOL ownsPendingInitialization;
+@property(nonatomic, assign) NSUInteger initializationGeneration;
 @property(nonatomic, strong) dispatch_queue_t previewQueue;
 @property(nonatomic, strong) NSArray* cachedLocalFilters;
 @property(nonatomic, strong) NSDate* lastFilterCacheTime;
@@ -153,6 +156,15 @@
 
   if ([@"getPlatformVersion" isEqualToString:method]) {
     result([@"iOS " stringByAppendingString:[[UIDevice currentDevice] systemVersion]]);
+  }
+  else if ([@"setPerformanceReportingEnabled" isEqualToString:method]) {
+    NSNumber* enabled = call.arguments[@"enabled"];
+    if (![enabled isKindOfClass:[NSNumber class]]) {
+      result([FlutterError errorWithCode:@"INVALID_ARGUMENT" message:@"Missing enabled flag" details:nil]);
+      return;
+    }
+    [NosmaiSDK setPerformanceReportingEnabled:enabled.boolValue];
+    result(nil);
   }
   else if ([@"initWithLicense" isEqualToString:method]) {
     [self handleInitWithLicense:call result:result];
@@ -560,38 +572,66 @@
     return;
   }
 
-  [NosmaiCore shared].delegate = self;
-
+  if (self.pendingInitialization) {
+    result([FlutterError errorWithCode:@"INIT_IN_PROGRESS" message:@"Initialization is already in progress." details:nil]);
+    return;
+  }
+  NosmaiCore *core = [NosmaiCore shared];
+  if (core.isInitialized && ![core.configuration.apiKey isEqualToString:licenseKey]) {
+    result(@NO);
+    return;
+  }
+  [NosmaiSDK setIntegrationPlatform:@"flutter"];
+  core.delegate = self;
+  NSUInteger generation = ++self.initializationGeneration;
+  self.pendingInitialization = result;
+  self.ownsPendingInitialization = !core.isInitialized;
   __weak typeof(self) weakSelf = self;
-  [[NosmaiCore shared] initializeWithAPIKey:licenseKey completion:^(BOOL success, NSError *error) {
-    __strong typeof(weakSelf) strongSelf = weakSelf;
-    if (!strongSelf) return;
-
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    typeof(self) owner = weakSelf;
+    if (owner && generation == owner.initializationGeneration && owner.pendingInitialization) {
+      [owner finishLicenseVerification:NO error:nil];
+    }
+  });
+  [core initializeWithAPIKey:licenseKey completion:^(BOOL success, NSError *error) {
     dispatch_async(dispatch_get_main_queue(), ^{
-      strongSelf.isInitialized = success;
-
-      if (success) {
-        NSData *keyBytes = [licenseKey dataUsingEncoding:NSUTF8StringEncoding];
-        unsigned char digest[CC_SHA256_DIGEST_LENGTH];
-        CC_SHA256(keyBytes.bytes, (CC_LONG)keyBytes.length, digest);
-        NSMutableString *scope = [NSMutableString string];
-        for (NSUInteger i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [scope appendFormat:@"%02x", digest[i]];
-        strongSelf.previewCacheScope = scope;
-        [[NosmaiCore shared].camera setDelegate:strongSelf];
-        [[NosmaiCore shared].effects setDelegate:strongSelf];
-        [strongSelf updateGameEventHandler];
-
-        [[NosmaiSDK sharedInstance] setDelegate:strongSelf];
-        [NosmaiCameraPreviewView reattachActivePreviewIfReady];
-
-        result(@YES);
-      } else {
-        result([FlutterError errorWithCode:@"INIT_FAILED"
-                                   message:error ? error.localizedDescription : @"Failed to initialize SDK with provided license"
-                                   details:nil]);
+      typeof(self) owner = weakSelf;
+      if (!owner || generation != owner.initializationGeneration || !owner.pendingInitialization) return;
+      if (!success) {
+        [owner finishLicenseVerification:NO error:error];
+        return;
       }
+
+      NSData *keyBytes = [licenseKey dataUsingEncoding:NSUTF8StringEncoding];
+      unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+      CC_SHA256(keyBytes.bytes, (CC_LONG)keyBytes.length, digest);
+      NSMutableString *scope = [NSMutableString string];
+      for (NSUInteger i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [scope appendFormat:@"%02x", digest[i]];
+      owner.previewCacheScope = scope;
+      [NosmaiSDK sharedInstance].delegate = owner;
+      // A cached license can be verified before delegate installation.
+      if ([[NosmaiCore shared] isLicenseValid]) [owner finishLicenseVerification:YES error:nil];
     });
   }];
+}
+
+- (void)finishLicenseVerification:(BOOL)valid error:(NSError*)error {
+  FlutterResult reply = self.pendingInitialization;
+  if (!reply) return;
+  self.pendingInitialization = nil;
+  self.isInitialized = valid;
+  if (valid) {
+    [NosmaiCore shared].camera.delegate = self;
+    [NosmaiCore shared].effects.delegate = self;
+    [self updateGameEventHandler];
+    [NosmaiCameraPreviewView reattachActivePreviewIfReady];
+    reply(@YES);
+  } else {
+    self.previewCacheScope = nil;
+    if (self.ownsPendingInitialization) [[NosmaiCore shared] cleanup];
+    if (error) reply([FlutterError errorWithCode:@"INIT_FAILED" message:error.localizedDescription details:nil]);
+    else reply(@NO);
+  }
 }
 
 #pragma mark - Live Frame Streaming
@@ -646,11 +686,6 @@
   if ([@"back" isEqualToString:position]) {
     cameraPosition = NosmaiCameraPositionBack;
   }
-
-  // if (!sessionPreset) {
-    // Use 1280x720 for optimal face detection performance
-    // sessionPreset = AVCaptureSessionPreset1280x720;
-  // }
 
   @try {
     NosmaiCameraConfig *config = [[NosmaiCameraConfig alloc] init];
@@ -2268,12 +2303,18 @@
 
 - (void)handleCleanup:(FlutterMethodCall*)call result:(FlutterResult)result {
   @try {
+    ++self.initializationGeneration;
+    FlutterResult pending = self.pendingInitialization;
+    self.pendingInitialization = nil;
+    if (pending) pending(@NO);
     [NosmaiFlutterPlugin clearLiveStreamFrameCallback];
     [NosmaiCore shared].effects.gameEventHandler = nil;
-    if (self.isInitialized) {
+    if (self.isInitialized || self.previewCacheScope || pending) {
       [[NosmaiCore shared] cleanup];
     }
 
+    self.isInitialized = NO;
+    self.previewCacheScope = nil;
     [self clearFilterCache];
 
     result(nil);
@@ -2990,12 +3031,14 @@
 }
 
 - (void)handleFilterPreview:(FlutterMethodCall *)call result:(FlutterResult)result {
-  if (!self.isInitialized || self.previewCacheScope.length == 0 ||
+  if (!self.isInitialized || ![[NosmaiCore shared] isLicenseValid] ||
+      self.previewCacheScope.length == 0 ||
       ([call.arguments[@"cloud"] boolValue] && ![[NosmaiSDK sharedInstance] isCloudFilterEnabled])) {
     result([FlutterError errorWithCode:@"PREVIEW_UNAVAILABLE" message:@"Preview access is unavailable" details:nil]);
     return;
   }
   NSString *scope = self.previewCacheScope;
+  NSUInteger generation = self.initializationGeneration;
   dispatch_async(self.previewQueue, ^{
     @autoreleasepool {
       NSString *path = [self previewPackageForArguments:call.arguments];
@@ -3005,7 +3048,8 @@
         NSString *directory = [[cache stringByAppendingPathComponent:@"NosmaiFlutterPreviews/v1"] stringByAppendingPathComponent:scope];
         BOOL ready = [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
         dispatch_async(dispatch_get_main_queue(), ^{
-          if (!self.isInitialized || ![scope isEqual:self.previewCacheScope]) {
+          if (generation != self.initializationGeneration || !self.isInitialized ||
+              ![[NosmaiCore shared] isLicenseValid] || ![scope isEqual:self.previewCacheScope]) {
             result([FlutterError errorWithCode:@"PREVIEW_UNAVAILABLE" message:@"Preview session changed" details:nil]);
             return;
           }
@@ -3030,8 +3074,9 @@
         }
       }
       dispatch_async(dispatch_get_main_queue(), ^{
-        result(self.isInitialized && [scope isEqual:self.previewCacheScope] && data
-            ? [FlutterStandardTypedData typedDataWithBytes:data] : nil);
+        BOOL current = generation == self.initializationGeneration && self.isInitialized &&
+            [[NosmaiCore shared] isLicenseValid] && [scope isEqual:self.previewCacheScope];
+        result(current && data ? [FlutterStandardTypedData typedDataWithBytes:data] : nil);
       });
     }
   });
@@ -3625,7 +3670,6 @@
 
     NSString *folderPath = [basePath stringByAppendingPathComponent:filterName];
 
-    // FLEXIBLE: Use helper methods to find files with flexible naming
     NSString *nosmaiPath = [self findNosmaiFileInFolder:folderPath];
     NSString *manifestPath = [self findManifestFileInFolder:folderPath filterName:filterName];
     NSString *previewPath = [self findPreviewFileInFolder:folderPath filterName:filterName];
@@ -4243,7 +4287,19 @@
     }
 
     if (statusString) {
-      [self.channel invokeMethod:@"onLicenseStatusChanged" arguments:@{@"status": statusString}];
+      NSUInteger generation = self.initializationGeneration;
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (generation != self.initializationGeneration || !self.previewCacheScope) return;
+        // A queued notification can precede cleanup and reinitialization.
+        BOOL validNow = [[NosmaiCore shared] isLicenseValid];
+        if (validNow != isValid) return;
+        if (self.pendingInitialization) {
+          [self finishLicenseVerification:validNow error:nil];
+        } else {
+          self.isInitialized = validNow;
+        }
+        [self.channel invokeMethod:@"onLicenseStatusChanged" arguments:@{@"status": statusString}];
+      });
     }
   } @catch (NSException *exception) {}
 }
@@ -4358,7 +4414,7 @@
 
         BOOL isDirectory = NO;
         if ([fileManager fileExistsAtPath:folderPath isDirectory:&isDirectory] && isDirectory) {
-          // FLEXIBLE: Find ANY .nosmai file in the folder (manifest NOT required)
+          // A .nosmai file is sufficient to list the filter.
           NSString *nosmaiFile = [self findNosmaiFileInFolder:folderPath];
 
           if (nosmaiFile) {
@@ -4980,7 +5036,6 @@ static dispatch_once_t _flipCIContextOnceToken;
         CVPixelBufferRef bufferToProcess = pixelBuffer;
         CVPixelBufferRef flippedBuffer = NULL;
 
-        // STEP 1: Manual flip if needed (front camera un-mirror)
         if (shouldFlip) {
             flippedBuffer = [self flipPixelBufferHorizontally:pixelBuffer];
             if (flippedBuffer) {
@@ -4988,7 +5043,6 @@ static dispatch_once_t _flipCIContextOnceToken;
             }
         }
 
-        // STEP 2: Create CMSampleBuffer
         CMSampleBufferRef sampleBuffer = NULL;
         CMSampleTimingInfo timingInfo = {
             .duration = CMTimeMake(1, 30),
@@ -5019,7 +5073,7 @@ static dispatch_once_t _flipCIContextOnceToken;
             return NO;
         }
 
-        // STEP 3: Process with Nosmai (ALWAYS mirror:NO since we manually flipped)
+        // The input flip above handles mirroring for this path.
         BOOL processSuccess = [sdk processSampleBuffer:sampleBuffer mirror:NO];
         CFRelease(sampleBuffer);
 
@@ -5028,7 +5082,6 @@ static dispatch_once_t _flipCIContextOnceToken;
             return NO;
         }
 
-        // STEP 4: Wait for callback
         dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC);
         long result = dispatch_semaphore_wait(_externalProcessor.frameSemaphore, timeout);
 
@@ -5037,7 +5090,7 @@ static dispatch_once_t _flipCIContextOnceToken;
             return NO;
         }
 
-        // STEP 5: Copy back to original buffer
+        // The caller receives the processed frame in its original pixel buffer.
         if (_externalProcessor.lastProcessedBuffer) {
             CVPixelBufferLockBaseAddress(pixelBuffer, 0);
             CVPixelBufferLockBaseAddress(_externalProcessor.lastProcessedBuffer, 0);

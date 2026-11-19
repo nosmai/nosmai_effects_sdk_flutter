@@ -8,9 +8,12 @@ applications through one SDK for Android and iOS.
 
 ## Installation
 
+For local testing of Flutter beta `2.0.3-beta.1`, use a path dependency:
+
 ```yaml
 dependencies:
-  nosmai_effects_sdk: ^2.0.2
+  nosmai_effects_sdk:
+    path: ../nosmai_effects_sdk_flutter
 ```
 
 ## Managed cloud previews
@@ -174,6 +177,23 @@ lifecycle, filters, capture, and production requirements.
 A valid Nosmai license key is required. Create and manage projects through the
 [Nosmai Console](https://console.nosmai.com/).
 
+### Initialization and performance reporting
+
+Await `NosmaiFlutter.initialize(licenseKey)` before checking beauty availability.
+It returns `true` after license verification. A different key returns `false`
+while the current session is active. On Android, close the camera session and
+await `NosmaiFlutter.instance.cleanup()` before initializing with a new key.
+On iOS, the native SDK retains its license key after cleanup. To switch keys,
+initialize with the new key on the next fresh app launch.
+
+Performance reporting is enabled by default. To disable optional performance
+reports from startup, call this on each app launch before initialization:
+
+```dart
+await NosmaiFlutter.setPerformanceReportingEnabled(false);
+final ready = await NosmaiFlutter.initialize(licenseKey);
+```
+
 ### Recommended camera lifecycle
 
 Initialize Nosmai once before opening the camera route, then mount exactly one
@@ -215,13 +235,12 @@ could otherwise stop a newly-created preview.
 
 ## Native SDK distribution
 
-- Version `2.0.2` uses Android Effects SDK `3.0.7` from the official GitHub
-  release and resolves `NosmaiCameraSDK 3.0.7` through CocoaPods on iOS.
-- The Flutter plugin resolves the Android AAR from
-  [Nosmai Effects SDK for Android releases](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.7);
-  applications do not need to keep a local AAR in `android/app/libs`.
-- Native SDK binaries and licensed `.nosmai` assets are not bundled in the
-  pub.dev package.
+- Flutter beta `2.0.3-beta.1` uses native SDK `3.0.8-beta.1` on Android and iOS.
+- iOS resolves `NosmaiCameraSDK 3.0.8-beta.1` through CocoaPods.
+- Android resolves the matching AAR from the
+  [GitHub prerelease](https://github.com/nosmai/nosmai_effects_sdk_android/releases/tag/v3.0.8-beta.1).
+  For local testing before publication, set `NOSMAI_SDK_LOCAL_REPO` to the
+  directory containing `nosmai-sdk-3.0.8-beta.1.aar`.
 
 See the Flutter integration guide for the current compatible native SDK
 versions and installation steps.
@@ -250,6 +269,4 @@ The widget releases only its own texture, hides old frames during camera
 switch/resume, and rebinds output when Flutter recreates its Surface.
 Native recording and streaming continue through their existing SDK sinks.
 
-This release resolves the matching Android AAR automatically from the official
-`3.0.7` GitHub release. Applications do not need to download or copy
-the AAR into `android/app/libs`.
+Android uses the AAR configured in [Native SDK distribution](#native-sdk-distribution).

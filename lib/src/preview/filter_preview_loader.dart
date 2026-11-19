@@ -29,6 +29,7 @@ class FilterPreviewLoader {
   int _memoryBytes = 0;
 
   Future<Uint8List?> load({
+    int session = 0,
     required String identity,
     required String? preview,
     required String? directory,
@@ -53,7 +54,8 @@ class FilterPreviewLoader {
           packageStamp,
         ])))
         .toString();
-    final request = '${directory ?? ''}/$primary/$package';
+    final scope = '$session/${directory ?? ''}';
+    final request = '$scope/$primary/$package';
     final running = _pending[request];
     if (running != null) return running;
     if (_pending.length >= maxEntries) return null;
@@ -66,7 +68,7 @@ class FilterPreviewLoader {
           if (fallback != null) return fallback;
         }
         final bytes =
-            await _attempt('${directory ?? ''}/$primary', () => download(uri));
+            await _attempt('$scope/$primary', () => download(uri));
         if (bytes != null) {
           await _write(directory, primary, bytes);
           return bytes;
@@ -85,7 +87,7 @@ class FilterPreviewLoader {
       final cached = await _read(directory, package);
       if (cached != null) return cached;
       final bytes =
-          await _attempt('${directory ?? ''}/$package', packagePreview);
+          await _attempt('$scope/$package', packagePreview);
       if (bytes != null) await _write(directory, package, bytes);
       return bytes;
     });

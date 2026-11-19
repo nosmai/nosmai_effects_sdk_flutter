@@ -4,13 +4,23 @@
 library;
 
 import 'dart:async';
-import 'package:flutter/foundation.dart' show internal;
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier, internal;
 import 'package:flutter/services.dart';
 
 import '../types/enums.dart';
 import '../types/models.dart';
 import '../types/errors.dart';
 import '../platform/platform_interface.dart';
+
+// Before the first init, widgets ask native whether preview access is available.
+// A null session explicitly closes access until a new verification succeeds.
+final _previewSession = ValueNotifier<int?>(0);
+int _lastPreviewSession = 0;
+
+@internal
+ValueListenable<int?> get filterPreviewSession => _previewSession;
 
 /// Main NosmaiFlutter class that provides the public API
 class NosmaiFlutter {
@@ -43,6 +53,15 @@ class NosmaiFlutter {
 
   /// Whether the SDK has been initialized
   bool _isInitialized = false;
+  String? _licenseScope;
+  int _disposeGeneration = 0;
+  Future<void> _lifecycle = Future<void>.value();
+
+  Future<T> _queueLifecycle<T>(Future<T> Function() action) {
+    final result = _lifecycle.then((_) => action());
+    _lifecycle = result.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return result;
+  }
 
   /// Whether processing is currently active
   bool _isProcessing = false;
@@ -132,22 +151,38 @@ class NosmaiFlutter {
   /// Use this after calling [getCloudFilters] with pagination parameters.
   NosmaiPaginationInfo? get lastPaginationInfo => _lastPaginationInfo;
 
-  /// Initialize the SDK
+  /// Controls optional performance reporting. Call before [initialize] to opt
+  /// out from the start of the process. Reporting is enabled by default.
+  static Future<void> setPerformanceReportingEnabled(bool enabled) =>
+      NosmaiFlutterPlatform.instance.setPerformanceReportingEnabled(enabled);
+
+  /// Initialize the SDK. Repeated calls with the same verified key are safe.
+  /// On Android, await [cleanup] before switching keys. On iOS, the native SDK
+  /// keeps its key for the app process. Supply the new key on a fresh launch.
   ///
   /// [licenseKey] - Your Nosmai SDK license key
   ///
   /// Returns true if initialization was successful, false otherwise.
-  static Future<bool> initialize(String licenseKey) async {
-    final instance = NosmaiFlutter.instance;
+  static Future<bool> initialize(String licenseKey) {
+    final generation = instance._disposeGeneration;
+    return instance._queueLifecycle(
+        () => instance._initialize(licenseKey, generation));
+  }
+
+  Future<bool> _initialize(String licenseKey, int generation) async {
+    if (generation != _disposeGeneration || licenseKey.trim().isEmpty) {
+      return false;
+    }
+    final scope = sha256.convert(utf8.encode(licenseKey)).toString();
 
     // Reset instance state if needed
-    if (instance._isDisposed) {
-      instance._isDisposed = false;
-      instance._isInitialized = false;
-      instance._isProcessing = false;
-      instance._isRecording = false;
-      instance._cameraSessionEndOperation = null;
-      instance._activeOperations.clear();
+    if (_isDisposed) {
+      _isDisposed = false;
+      _isInitialized = false;
+      _isProcessing = false;
+      _isRecording = false;
+      _cameraSessionEndOperation = null;
+      _activeOperations.clear();
     }
 
     // Initialization is intentionally idempotent. Camera/live screens may both
@@ -155,21 +190,25 @@ class NosmaiFlutter {
     // its asynchronous detach. Cleaning up here used to let that old teardown
     // race with (and stop) the new preview, producing an intermittent black
     // screen. Call cleanup() explicitly only when a real context reset is needed.
-    if (instance._isInitialized) return true;
+    if (_licenseScope != null && _licenseScope != scope) return false;
+    if (_isInitialized) return true;
 
     try {
-      final success = await instance._trackOperation(
+      final success = await _trackOperation(
           NosmaiFlutterPlatform.instance.initWithLicense(licenseKey));
 
-      instance._isInitialized = success;
-
-      if (success) {
+      if (success) _licenseScope = scope;
+      _isInitialized = success && generation == _disposeGeneration;
+      if (_isInitialized) {
+        _previewSession.value = ++_lastPreviewSession;
         _preloadEssentialFilters();
+      } else {
+        _previewSession.value = null;
       }
-
-      return success;
+      return _isInitialized;
     } catch (e) {
-      instance._errorController?.add(NosmaiError.general(
+      _previewSession.value = null;
+      _errorController?.add(NosmaiError.general(
         type: NosmaiErrorType.platformError,
         message: 'Failed to initialize SDK',
         details: e.toString(),
@@ -876,10 +915,7 @@ class NosmaiFlutter {
     }
   }
 
-  /// Clear everything - Nuclear option
-  ///
-  /// Clears ALL: AR effects, regular filters, beauty effects, and background segmentation.
-  /// Use this when you want to completely reset the visual pipeline.
+  /// Clears active AR effects, filters, beauty effects, games, and background segmentation.
   ///
   /// Example:
   /// ```dart
@@ -899,8 +935,11 @@ class NosmaiFlutter {
   }
 
   /// Clean up and release all resources
-  Future<void> cleanup() async {
+  Future<void> cleanup() => _queueLifecycle(_cleanup);
+
+  Future<void> _cleanup() async {
     if (_isDisposed) return;
+    _previewSession.value = null;
 
     // Do not set _isDisposed here; this is called during re-initialization.
     // Only dispose() should set _isDisposed = true
@@ -924,12 +963,13 @@ class NosmaiFlutter {
         });
       }
 
-      if (_isInitialized) {
+      if (_licenseScope != null || _isInitialized) {
         await NosmaiFlutterPlatform.instance.cleanup().catchError((e) {
           // Platform cleanup failed during cleanup - ignore error
         });
       }
 
+      _licenseScope = null;
       _isInitialized = false;
       _isProcessing = false;
       _isRecording = false;
@@ -2630,11 +2670,14 @@ class NosmaiFlutter {
 
   /// Dispose of stream controllers and clean up all resources
   void dispose() {
+    // Also invalidate an initialize() queued between two dispose() calls.
+    _disposeGeneration++;
+    _previewSession.value = null;
     if (_isDisposed) return;
 
     _isDisposed = true;
 
-    unawaited(_performAsyncCleanup());
+    unawaited(_queueLifecycle(_performAsyncCleanup));
 
     _errorController?.close();
     _downloadProgressController?.close();
@@ -2680,7 +2723,7 @@ class NosmaiFlutter {
       }
     }
 
-    if (_isInitialized) {
+    if (_licenseScope != null || _isInitialized) {
       try {
         await platform.cleanup().timeout(const Duration(seconds: 5));
       } catch (_) {
@@ -2688,6 +2731,7 @@ class NosmaiFlutter {
       }
     }
 
+    _licenseScope = null;
     _isInitialized = false;
     _isProcessing = false;
     _isRecording = false;
@@ -2822,6 +2866,10 @@ abstract final class NosmaiNativeEvents {
   static void licenseStatus(NosmaiLicenseStatus status) {
     final inst = NosmaiFlutter.instance;
     if (inst._isDisposed) return;
+    if (status != NosmaiLicenseStatus.valid) {
+      inst._isInitialized = false;
+      _previewSession.value = null;
+    }
     inst._licenseStatusController ??=
         StreamController<NosmaiLicenseStatus>.broadcast();
     inst._licenseStatusController!.add(status);

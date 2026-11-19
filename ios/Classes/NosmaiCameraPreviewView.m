@@ -271,20 +271,9 @@ static __weak NosmaiCameraPreviewView* sActivePreviewView = nil;
             self.isAttached = NO;
         }
 
-        // Release semaphore before calling attach, as attach might need to wait on other things
-        // or we can keep it locked if attach is fast.
-        // In this case, attachCameraToView calls completeAttachment which grabs semaphore at the end.
-        // So we should RELEASE it here to avoid deadlock if completeAttachment needs it?
-        // Wait, completeAttachment waits for semaphore at the end to clear flags.
-        // So we MUST release it here?
-        // No, completeAttachment is called synchronously below.
-        // Let's look at completeAttachment. It waits for semaphore at line 342.
-        // If we hold it here, we DEADLOCK.
-        // So we must release it before calling attachCameraToView.
-
+        // completeAttachment acquires this semaphore to clear the setup flags.
         dispatch_semaphore_signal(self.setupSemaphore);
 
-        // Attach immediately without delay
         [self attachCameraToView];
     });
 }
@@ -315,7 +304,7 @@ static __weak NosmaiCameraPreviewView* sActivePreviewView = nil;
 #ifdef DEBUG
     NOSMAI_PLUGIN_LOG(@"[NosmaiCameraPreview] completeAttachment (view=%p, attached=%d)", self->_nativeView, self.isAttached);
 #endif
-    // Essential dual attachment (the actual fix)
+    // The camera and the SDK renderer share the same preview view.
     [core.camera attachToView:self->_nativeView];
     [[NosmaiSDK sharedInstance] setPreviewView:self->_nativeView];
     self.isAttached = YES;
@@ -332,7 +321,7 @@ static __weak NosmaiCameraPreviewView* sActivePreviewView = nil;
     [self->_nativeView setNeedsLayout];
     [self->_nativeView layoutIfNeeded];
 
-    // Essential fillMode configuration (the key fix)
+    // Apply aspect fill after the native preview subview has been attached.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [self configureNosmaiViewFillMode];
 
@@ -424,7 +413,6 @@ static __weak NosmaiCameraPreviewView* sActivePreviewView = nil;
 }
 
 - (void)configureNosmaiViewFillMode {
-    // Essential fillMode fix from working iOS app
     for (UIView *subview in self->_nativeView.subviews) {
         if ([subview isKindOfClass:NSClassFromString(@"NosmaiView")]) {
             subview.frame = self->_nativeView.bounds;
@@ -438,13 +426,10 @@ static __weak NosmaiCameraPreviewView* sActivePreviewView = nil;
 
 - (void)detachCameraGracefully {
 
-    // Use timeout to avoid blocking main thread forever
+    // Limit how long the main thread waits for an in-progress attachment.
     dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC));
     if (dispatch_semaphore_wait(self.setupSemaphore, timeout) != 0) {
         NOSMAI_PLUGIN_LOG(@"[NosmaiCameraPreview] Timeout waiting for semaphore in detach");
-        // Proceed anyway if we are deallocating or force detaching,
-        // but strictly speaking we should be careful.
-        // For now, just log and skip to avoid ANR.
         return;
     }
 

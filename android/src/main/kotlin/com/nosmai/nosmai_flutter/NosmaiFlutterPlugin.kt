@@ -75,7 +75,16 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
     private lateinit var textures: TextureRegistry
     private var activity: Activity? = null
     private var activityBinding: ActivityPluginBinding? = null
-    private var pendingLicenseKey: String? = null
+    // The directory name is stable across launches; identity changes on each init.
+    private class LicenseSession(val scope: String)
+    @Volatile private var verifiedSession: LicenseSession? = null
+    private var licenseSession: LicenseSession? = null
+    private var licenseListener: NosmaiSDK.LicenseStatusListener? = null
+    private val licenseWaiters = mutableListOf<Result>()
+    private var lastLicenseStatus: String? = null
+    private val verificationTimeout = Runnable {
+        if (licenseWaiters.isNotEmpty()) endLicenseSession(shutdown = true)
+    }
     @Volatile private var beautyPreparationGeneration = 0L
     private var beautyPrepared = false
     private var beautyPreparing = false
@@ -402,6 +411,14 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
         val manufacturer = Build.MANUFACTURER?.lowercase().orEmpty()
         val brand = Build.BRAND?.lowercase().orEmpty()
 
+        // Redmi A2+ qualified with physical Camera2 OES, front/rear,
+        // Home/resume and saved recording. Preserve other device guards.
+        if (hardware == "mt6765" && manufacturer == "xiaomi" &&
+            Build.MODEL.equals("23028RNCAG", ignoreCase = true)
+        ) {
+            return true
+        }
+
         if (hardware.contains("mt") ||
             manufacturer.contains("mediatek") ||
             brand.contains("tecno") ||
@@ -415,6 +432,8 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
     }
 
     companion object {
+        // Native initialization is process-wide and may outlive a Flutter engine.
+        private var pluginSdkScope: String? = null
         private const val TAG = "NosmaiFlutterPlugin"
         private const val CHANNEL = "nosmai_camera_sdk"
         private const val FILTERS_PREFIX = "assets/filters/"
@@ -717,6 +736,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
         isProcessingActive = false
         surface = null
         isSurfaceReady = false
+        endLicenseSession(shutdown = licenseWaiters.isNotEmpty())
         cloudDownloadWaiters.clear()
         cloudFilterCatalogExecutor.shutdownNow()
         localFilterCatalogExecutor.shutdownNow()
@@ -758,6 +778,14 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             "setGameEventListenerEnabled" -> {
                 setGameEventsEnabled(call.argument<Boolean>("enabled") == true)
                 result.success(null)
+            }
+            "setPerformanceReportingEnabled" -> {
+                val enabled = call.argument<Boolean>("enabled")
+                if (enabled == null) result.error("INVALID_ARGUMENT", "Missing enabled flag", null)
+                else {
+                    NosmaiSDK.setPerformanceReportingEnabled(enabled)
+                    result.success(null)
+                }
             }
             "initWithLicense" -> handleInitWithLicense(call, result)
             "createTexture", "createPreviewTexture" -> handleCreateTexture(call, result)
@@ -1234,36 +1262,96 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
 
     // --- Initialization ---
     private fun handleInitWithLicense(call: MethodCall, result: Result) {
-        try {
-            val key = call.argument<String>("licenseKey").orEmpty()
-            val act = activity
-            if (act == null) {
-                pendingLicenseKey = key
-                result.success(true)
-                return
-            }
-            initializeSdk(act, key)
-            result.success(true)
-        } catch (t: Throwable) {
-            NosmaiLog.e(TAG, "initWithLicense error", t)
+        val key = call.argument<String>("licenseKey").orEmpty()
+        if (key.isBlank()) { result.success(false); return }
+        val scope = MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        if (NosmaiSDK.isInitialized() && pluginSdkScope != scope) {
             result.success(false)
+            return
+        }
+        if (verifiedSession?.scope == scope && NosmaiSDK.isLicenseValid()) {
+            result.success(true)
+            return
+        }
+        if (licenseWaiters.isNotEmpty()) {
+            if (licenseSession?.scope == scope) licenseWaiters.add(result) else result.success(false)
+            return
+        }
+        if (licenseSession != null) endLicenseSession(shutdown = true)
+        val session = LicenseSession(scope)
+        licenseSession = session
+        licenseWaiters.add(result)
+        try {
+            NosmaiSDK.setIntegrationPlatform("flutter")
+            NosmaiSDK.initialize(context, key)
+            pluginSdkScope = scope
+            val listener = NosmaiSDK.LicenseStatusListener { _, _ ->
+                // Read current state. The SDK also posts a snapshot upon subscribing.
+                runOnMain { updateLicenseSession(session) }
+            }
+            licenseListener = listener
+            mainHandler.postDelayed(verificationTimeout, 60_000)
+            NosmaiSDK.addLicenseStatusListener(listener)
+        } catch (error: Exception) {
+            NosmaiLog.e(TAG, "SDK initialization failed", error)
+            endLicenseSession(shutdown = true)
         }
     }
 
-    private fun setupLicenseCallback() {
-        try {
-            com.nosmai.effect.internal.Nosmai.setLicenseStatusCallback { isValid, status ->
-                runOnMain {
-                    val statusString = when {
-                        isValid && status.equals("VALID", ignoreCase = true) -> "valid"
-                        status.equals("EXPIRED", ignoreCase = true) -> "expired"
-                        status.equals("INVALID", ignoreCase = true) -> "invalid"
-                        else -> return@runOnMain
-                    }
-                    channel.invokeMethod("onLicenseStatusChanged", mapOf("status" to statusString))
-                }
+    private fun updateLicenseSession(session: LicenseSession) {
+        if (session !== licenseSession) return
+        val status = NosmaiSDK.getLicenseStatus()
+        val valid = NosmaiSDK.isLicenseValid() && status == "VALID"
+        if (!valid && status != "INVALID" && status != "EXPIRED") return
+        if (lastLicenseStatus != status) {
+            lastLicenseStatus = status
+            channel.invokeMethod("onLicenseStatusChanged", mapOf("status" to status.lowercase()))
+        }
+        mainHandler.removeCallbacks(verificationTimeout)
+        val firstValid = valid && verifiedSession == null
+        if (firstValid) verifiedSession = LicenseSession(session.scope)
+        if (!valid) verifiedSession = null
+        isSdkInitialized = valid
+        if (firstValid) {
+            try {
+                prepareVerifiedPreview()
+            } catch (error: RuntimeException) {
+                NosmaiLog.e(TAG, "Preview setup failed after verification", error)
+                endLicenseSession(shutdown = true)
+                return
             }
-        } catch (_: Throwable) {}
+        }
+        if (!valid && licenseWaiters.isNotEmpty()) {
+            endLicenseSession(shutdown = true)
+            return
+        }
+        finishLicenseWaiters(valid)
+    }
+
+    private fun finishLicenseWaiters(valid: Boolean) {
+        val waiting = licenseWaiters.toList()
+        licenseWaiters.clear()
+        waiting.forEach { it.success(valid) }
+    }
+
+    private fun endLicenseSession(shutdown: Boolean) {
+        mainHandler.removeCallbacks(verificationTimeout)
+        licenseListener?.let { NosmaiSDK.removeLicenseStatusListener(it) }
+        licenseListener = null
+        val session = licenseSession
+        licenseSession = null
+        verifiedSession = null
+        lastLicenseStatus = null
+        isSdkInitialized = false
+        try {
+            if (shutdown && session != null && pluginSdkScope == session.scope) {
+                NosmaiSDK.cleanup()
+                pluginSdkScope = null
+            }
+        } finally {
+            finishLicenseWaiters(false)
+        }
     }
 
     private fun parseCloudFilterVersion(value: String?): NosmaiCloudFilterVersion {
@@ -1273,16 +1361,11 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
         }
     }
 
-    private fun initializeSdk(act: Activity, key: String) {
-        if (isSdkInitialized) return
-
-        setupLicenseCallback()
-
-        NosmaiSDK.initialize(act, key)
-
+    private fun prepareVerifiedPreview() {
+        val act = activity
         previewView?.let { pv ->
             configurePreviewViewForCamera(pv)
-            if (!usingPlatformView && pv.parent == null) {
+            if (act != null && !usingPlatformView && pv.parent == null) {
                 val root = act.findViewById<ViewGroup>(android.R.id.content)
                 val lp = ViewGroup.LayoutParams(1, 1)
                 root.addView(pv, lp)
@@ -1297,8 +1380,6 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             } catch (_: Throwable) {}
 
         }
-
-        isSdkInitialized = true
 
         if (pendingStartProcessing && previewView != null) {
             mainHandler.post { attemptDeferredStart() }
@@ -3166,30 +3247,26 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
         "${file.canonicalPath}:${file.length()}:${file.lastModified()}"
 
     private fun handleFilterPreview(call: MethodCall, result: Result, extract: Boolean) {
+        val session = verifiedSession
+        if (session == null || !NosmaiSDK.isLicenseValid() ||
+            (call.argument<Boolean>("cloud") == true && !NosmaiCloud.isEnabled())) {
+            result.error("PREVIEW_UNAVAILABLE", "Preview access is unavailable", null)
+            return
+        }
         backgroundExecutor.execute {
             try {
-                val key = com.nosmai.effect.internal.Nosmai.getLicenseKey().orEmpty()
-                if (key.isBlank() || (call.argument<Boolean>("cloud") == true &&
-                    !com.nosmai.effect.internal.NosmaiCloudFilter.isCloudFiltersEnabled())) {
-                    mainHandler.post { result.error("PREVIEW_UNAVAILABLE", "Preview access is unavailable", null) }
-                    return@execute
-                }
-                val scope = java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(key.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
                 val file = previewPackage(call)
                 if (!extract) {
-                    val root = File(context.cacheDir, "NosmaiFlutterPreviews/v1/$scope")
+                    val root = File(context.cacheDir, "NosmaiFlutterPreviews/v1/${session.scope}")
                     val directory = if (root.isDirectory || root.mkdirs()) root.path else null
                     val stamp = file?.let { previewStamp(it) }
                     mainHandler.post {
-                        if (com.nosmai.effect.internal.Nosmai.getLicenseKey() != key) {
+                        if (verifiedSession !== session || !NosmaiSDK.isLicenseValid()) {
                             result.error("PREVIEW_UNAVAILABLE", "Preview session changed", null)
                             return@post
                         }
-                        result.success(mapOf(
-                        "directory" to directory,
-                        "packageStamp" to stamp
-                    )) }
+                        result.success(mapOf("directory" to directory, "packageStamp" to stamp))
+                    }
                     return@execute
                 }
                 val stamp = call.argument<String>("packageStamp")
@@ -3197,9 +3274,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
                     mainHandler.post { result.success(null) }
                     return@execute
                 }
-                val cls = Class.forName("com.nosmai.effect.internal.NosmaiFilter")
-                val bitmap = cls.getMethod("nativeExtractPreviewFromFile", String::class.java)
-                    .invoke(null, file.path) as? Bitmap
+                val bitmap = NosmaiFilter.nativeExtractPreviewFromFile(file.path)
                 var bytes: ByteArray? = null
                 if (bitmap != null) {
                     try {
@@ -3214,9 +3289,11 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
                         } finally { if (resized !== bitmap) resized.recycle() }
                     } finally { bitmap.recycle() }
                 }
-                if (stamp != previewStamp(file) || com.nosmai.effect.internal.Nosmai.getLicenseKey() != key) bytes = null
+                if (stamp != previewStamp(file)) bytes = null
                 val output = bytes
-                mainHandler.post { result.success(output) }
+                mainHandler.post {
+                    result.success(if (verifiedSession === session && NosmaiSDK.isLicenseValid()) output else null)
+                }
             } catch (_: Throwable) {
                 mainHandler.post { result.success(null) }
             }
@@ -3967,7 +4044,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
     // --- SDK Cleanup and Management ---
     private fun handleCleanup(result: Result) {
         try {
-            if (isSdkInitialized) {
+            if (licenseSession != null) {
                 try {
                     cleanupInProgress = true
                     lastCleanupAtMs = System.currentTimeMillis()
@@ -4000,6 +4077,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
             }
 
 
+            endLicenseSession(shutdown = true)
             result.success(null)
             Handler(Looper.getMainLooper()).postDelayed({ cleanupInProgress = false }, 700)
         } catch (t: Throwable) {
@@ -4074,10 +4152,7 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
 
             try {
                 // 7. Full SDK cleanup - this releases native resources
-                if (isSdkInitialized) {
-                    NosmaiSDK.cleanup()
-                    NosmaiLog.d(TAG, "SDK cleanup completed")
-                }
+                endLicenseSession(shutdown = true)
             } catch (e: Throwable) {
                 NosmaiLog.w(TAG, "SDK cleanup warning: ${e.message}")
             }
@@ -4728,16 +4803,10 @@ class NosmaiFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, Plu
         activity = binding.activity
         activityBinding = binding
         activityBinding?.addRequestPermissionsResultListener(this)
-        val key = pendingLicenseKey
-        if (key != null && !isSdkInitialized) {
-            try {
-                initializeSdk(binding.activity, key)
-            } catch (_: Throwable) {}
-            pendingLicenseKey = null
-        }
+        if (isSdkInitialized) prepareVerifiedPreview()
     }
     override fun onDetachedFromActivityForConfigChanges() { activity = null; activityBinding = null }
-    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) { activity = binding.activity; activityBinding = binding }
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) = onAttachedToActivity(binding)
     override fun onDetachedFromActivity() { activity = null; activityBinding = null }
 
     private fun ensureCameraPermissionThenStart() {

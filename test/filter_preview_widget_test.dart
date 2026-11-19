@@ -24,6 +24,12 @@ void main() {
       type: 'cloud');
 
   setUp(() async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'initWithLicense') return true;
+      if (call.method == 'getLocalFilters') return [];
+      return null;
+    });
+    expect(await NosmaiFlutter.initialize('test-A'), isTrue);
     root = await Directory.systemTemp.createTemp('nosmai-preview-widget-');
     final recorder = ui.PictureRecorder();
     Canvas(recorder)
@@ -38,6 +44,7 @@ void main() {
   });
   tearDown(() async {
     messenger.setMockMethodCallHandler(channel, null);
+    await NosmaiFlutter.instance.cleanup();
     await root.delete(recursive: true);
   });
 
@@ -136,4 +143,60 @@ void main() {
     expect(find.byType(RawImage), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'cleanup clears a mounted image and ignores an old preview reply',
+    (tester) async {
+      final pending = Completer<Object?>();
+      var requested = false;
+      var session = 1;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'initWithLicense') {
+          session++;
+          return true;
+        }
+        if (call.method == 'getFilterPreviewContext') {
+          if (session == 2) {
+            requested = true;
+            return pending.future;
+          }
+          return {'directory': root.path, 'packageStamp': 'verified'};
+        }
+        if (call.method == 'loadFilterPackagePreview') return png;
+        if (call.method == 'getLocalFilters') return [];
+        return null;
+      });
+
+      await tester.runAsync(() async {
+        expect(await NosmaiFlutter.initialize('test-A'), isTrue);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: NosmaiFilterPreview(
+              filter: filter('scoped'),
+              errorBuilder: (_) => const Text('No preview'),
+            ),
+          ),
+        );
+        for (var i = 0;
+            i < 100 && find.byType(RawImage).evaluate().isEmpty;
+            i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          await tester.pump();
+        }
+        expect(find.byType(RawImage), findsOneWidget);
+        await NosmaiFlutter.instance.cleanup();
+        await tester.pump();
+        expect(find.text('No preview'), findsOneWidget);
+
+        expect(await NosmaiFlutter.initialize('test-B'), isTrue);
+        await tester.pump();
+        expect(requested, isTrue);
+        await NosmaiFlutter.instance.cleanup();
+        pending.complete({'directory': root.path, 'packageStamp': 'verified'});
+      });
+      await tester.pumpAndSettle();
+      expect(find.byType(RawImage), findsNothing);
+      expect(find.text('No preview'), findsOneWidget);
+    },
+  );
 }

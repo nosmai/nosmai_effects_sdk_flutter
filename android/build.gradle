@@ -23,9 +23,7 @@ allprojects {
 
 apply plugin: "com.android.library"
 
-// Pinned native SDK release. Bump here (and in README "Native SDK distribution")
-// when a new Android SDK ships.
-def nosmaiSdkVersion = "3.0.7"
+def nosmaiSdkVersion = "3.0.8-beta.1"
 apply plugin: "kotlin-android"
 
 android {

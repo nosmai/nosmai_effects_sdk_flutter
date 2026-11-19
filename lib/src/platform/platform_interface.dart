@@ -27,6 +27,11 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
   }
 
   /// Initialize the SDK with a license key
+  Future<void> setPerformanceReportingEnabled(bool enabled) {
+    throw UnimplementedError(
+        'setPerformanceReportingEnabled() has not been implemented.');
+  }
+
   Future<bool> initWithLicense(String licenseKey) {
     throw UnimplementedError('initWithLicense() has not been implemented.');
   }
@@ -69,7 +74,7 @@ abstract class NosmaiFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('clearFilter() has not been implemented.');
   }
 
-  /// Clear everything - AR effects, filters, beauty, games, background (nuclear option)
+  /// Clears active AR effects, filters, beauty effects, games, and background segmentation.
   Future<void> clearAll() {
     throw UnimplementedError('clearAll() has not been implemented.');
   }

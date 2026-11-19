@@ -266,6 +266,11 @@ class MethodChannelNosmaiFlutter extends NosmaiFlutterPlatform {
   }
 
   @override
+  Future<void> setPerformanceReportingEnabled(bool enabled) =>
+      methodChannel.invokeMethod<void>(
+          'setPerformanceReportingEnabled', {'enabled': enabled});
+
+  @override
   Future<bool> initWithLicense(String licenseKey) async {
     try {
       final result = await methodChannel.invokeMethod<bool>('initWithLicense', {
